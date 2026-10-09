@@ -1,6 +1,6 @@
-# CarAuction
+# Okshun
 
-Search, screening and deal analysis for South African car auctions, built for a fix-and-resell workflow.
+Okshun (working name) brings South African car auctions into one place: search, screening and deal analysis, built for a fix-and-resell workflow.
 
 The tool collects auction listings, normalises them into one shared format, estimates the all-in cost (bid + buyer's commission + fees + VAT) and scores each vehicle for purchase risk. It does **not** place bids. Bidding always happens on the auction house's own site.
 
