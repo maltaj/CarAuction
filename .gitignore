@@ -1,0 +1,18 @@
+# Secrets and login session — never commit
+config.yaml
+storage_state.json
+.env
+
+# Data and outputs
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+debug_html/
+screenshots/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
