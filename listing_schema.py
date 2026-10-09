@@ -10,6 +10,7 @@ fields. GoBid is adapter #1.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
@@ -40,13 +41,13 @@ class ListingStatus(str, Enum):
 
 
 class SaDamageCode(str, Enum):
-    """SA salvage codes. Keep the raw text in `damage_code_raw` too."""
-    CODE_1 = "code_1"   # never re-registrable (permanently demolished)
-    CODE_2 = "code_2"   # stripped for parts only
-    CODE_3 = "code_3"   # rebuilt, needs police clearance + roadworthy
-    CODE_4 = "code_4"   # used / repairable
-    CODE_5 = "code_5"   # (not a standard NaTIS code; keep for sources that use it)
-    NONE = "none"       # no salvage code (e.g. bank repo, fleet return)
+    """SA NaTIS vehicle codes. Sub-codes (3A/3B/3C) stay in `damage_code_raw`."""
+    CODE_1 = "code_1"   # new
+    CODE_2 = "code_2"   # used, normal registration
+    CODE_3 = "code_3"   # rebuilt (3A/3B/3C), needs police clearance + roadworthy
+    CODE_4 = "code_4"   # permanently unfit for road use, parts only
+    CODE_5 = "code_5"   # permanently demolished
+    NONE = "none"       # source states no code
     UNKNOWN = "unknown"
 
 
@@ -190,35 +191,60 @@ def _code(v) -> SaDamageCode:
 def _num(v) -> Optional[float]:
     if v in (None, ""):
         return None
-    s = str(v).replace("R", "").replace(",", "").replace(" ", "").replace("\u00a0", "")
+    s = re.sub(r"[^\d.]", "", str(v))  # "R 62,500" / "98 500 km" -> digits only
     try:
         return float(s)
     except ValueError:
         return None
 
 
-class GoBidAdapter(SourceAdapter):
-    name = "gobid"
-    default_commission_pct = None  # ADJUST ME: GoBid's published buyer's fee
-    default_fixed_fees = None      # ADJUST ME: admin / release fees
+def _year_make_model(title: Optional[str]):
+    """'2018 Toyota Hilux 2.4 GD-6' -> (2018, 'Toyota', 'Hilux 2.4 GD-6')."""
+    m = re.match(r"\s*((?:19|20)\d{2})\s+(\S+)\s*(.*)", title or "")
+    if not m:
+        return None, None, None
+    return int(m.group(1)), m.group(2), (m.group(3) or None)
 
-    def __init__(self, scraper_rows: Iterable[dict]):
-        # Feed it the dicts gobid_scraper.py already builds (before its DB write).
+
+def _auction_type(v) -> AuctionType:
+    s = str(v or "").strip().lower()
+    if "live" in s or "webcast" in s:
+        return AuctionType.LIVE
+    if "timed" in s or "online" in s:
+        return AuctionType.TIMED
+    if "tender" in s:
+        return AuctionType.TENDER
+    return AuctionType.UNKNOWN
+
+
+class GoBidAdapter(SourceAdapter):
+    """Maps gobid_scraper.Listing objects (or their dicts) to the shared Listing."""
+
+    name = "gobid"
+    default_commission_pct = None  # ADJUST ME: GoBid's published buyer's fee (%)
+    default_fixed_fees = None      # ADJUST ME: admin / release fees (R)
+
+    def __init__(self, scraper_rows: Iterable):
+        # Accepts gobid_scraper.Listing dataclass objects or plain dicts.
         self._rows = scraper_rows
 
     def fetch_raw(self) -> Iterable[dict]:
-        return self._rows
+        for r in self._rows:
+            yield r if isinstance(r, dict) else asdict(r)
 
     def to_listing(self, r: dict) -> Listing:
-        # Left side: Listing field. Right side: key in gobid_scraper.py output.
-        # ADJUST ME to match your scraper's actual dict keys.
+        t_year, t_make, t_model = _year_make_model(r.get("title"))
+        year = r.get("year")
+        photos = r.get("photo_urls") or ""
+        risk_reasons = r.get("risk_reasons") or ""
         return Listing(
             source=self.name,
             source_lot_id=str(r["lot_id"]),
             url=r["url"],
-            make=r.get("make"),
-            model=r.get("model"),
-            year=int(r["year"]) if r.get("year") else None,
+            make=r.get("make") or t_make,
+            model=r.get("model") or t_model,
+            variant=r.get("variant"),
+            year=int(_num(year)) if _num(year) else t_year,
             mileage_km=int(_num(r.get("mileage")) or 0) or None,
             vin=r.get("vin"),
             damage_code=_code(r.get("damage_code")),
@@ -226,16 +252,23 @@ class GoBidAdapter(SourceAdapter):
             primary_damage=r.get("primary_damage"),
             secondary_damage=r.get("secondary_damage"),
             runs_and_drives=_tri(r.get("run_and_drive")),
-            keys_available=_tri(r.get("keys")),
+            keys_available=_tri(r.get("keys_available")),
             odometer_status=r.get("odometer_status"),
             description=r.get("description"),
-            auction_type=AuctionType.TIMED,  # ADJUST ME if the page says live/online
+            auction_type=_auction_type(r.get("auction_type")),
             auction_end=r.get("auction_date"),
             branch=r.get("branch"),
+            province=r.get("province"),
             starting_bid=_num(r.get("starting_bid")),
             current_bid=_num(r.get("current_bid")),
             estimated_retail=_num(r.get("estimated_value")),
-            photo_urls=r.get("photos") or [],
+            photo_urls=[p for p in photos.split(";") if p] if isinstance(photos, str) else list(photos),
+            # The scraper already scores with config.yaml rules; carry those over
+            # until scoring moves to the shared engine.
+            risk_score=r.get("risk_score"),
+            risk_label=r.get("risk_label"),
+            risk_reasons=[x.strip() for x in risk_reasons.split(";") if x.strip()]
+                         if isinstance(risk_reasons, str) else list(risk_reasons),
         )
 
 

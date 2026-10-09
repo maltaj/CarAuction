@@ -6,8 +6,8 @@ The tool collects auction listings, normalises them into one shared format, esti
 
 ## Status
 
-- `listing_schema.py` — shared `Listing` schema, adapter contract, GoBid adapter (#1), all-in cost estimate and SQLite storage with bid history.
-- GoBid scraper — to be added.
+- `gobid_scraper.py` — logs into gobid.co.za, scrapes listings, scores risk, writes SQLite + CSV, sends email alerts. Setup, selector calibration and scheduling: see [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Selectors marked `# ADJUST ME` still need checking against the live site (`--debug-html`).
+- `listing_schema.py` — shared `Listing` schema, adapter contract, GoBid adapter (#1, mapped to the scraper's real fields), all-in cost estimate and SQLite storage with bid history.
 - Further auction houses — added only with the auction house's written permission (see Data access).
 
 ## How it fits together
@@ -30,8 +30,13 @@ Each adapter only fetches and maps data. Fee estimates, scoring, storage and ale
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-pip install -r requirements.txt  # once the scraper is added
+pip install -r requirements.txt
+playwright install chromium
+copy config.example.yaml config.yaml   # then add your GoBid login
+python gobid_scraper.py
 ```
+
+To feed scraper output into the shared schema:
 
 ```python
 import sqlite3
@@ -40,13 +45,13 @@ from listing_schema import GoBidAdapter, estimate_all_in, upsert, DDL
 conn = sqlite3.connect("auctions.db")
 conn.executescript(DDL)
 
-listings = GoBidAdapter(gobid_rows).run()   # gobid_rows = dicts from the scraper
+listings = GoBidAdapter(scraped).run()   # scraped = gobid_scraper.Listing objects
 for l in listings:
     estimate_all_in(l)
 upsert(conn, listings)
 ```
 
-Lines marked `# ADJUST ME` in `listing_schema.py` need the scraper's real field names and each house's published fee rates.
+Set `default_commission_pct` and `default_fixed_fees` on `GoBidAdapter` to GoBid's published buyer's fees so the all-in cost estimate is complete.
 
 ## Data access
 

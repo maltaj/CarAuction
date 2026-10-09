@@ -8,8 +8,9 @@ storage_state.json
 *.sqlite
 *.sqlite3
 *.csv
-debug_html/
-screenshots/
+output/
+debug_output/
+*.log
 
 # Python
 __pycache__/

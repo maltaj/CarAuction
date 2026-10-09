@@ -1,0 +1,104 @@
+# Copy this file to config.yaml and fill in your details.
+# config.yaml is where your real credentials live -- keep it out of git
+# (a .gitignore entry is already set up for you).
+
+# --- GoBid login ---
+username: "your_email_or_username@example.com"
+password: "your_password"
+
+# --- What to scrape ---
+# One or more GoBid search URLs, exactly as they appear in your browser
+# after applying filters on gobid.co.za (province, price range, damage
+# type, keywords, etc). The scraper paginates each of these automatically.
+search_urls:
+  - "https://www.gobid.co.za/search?ac=1"
+  # - "https://www.gobid.co.za/search?ac=1&province=gauteng&priceMax=80000"
+
+max_pages: 5          # safety cap on pagination per search URL
+scrape_details: true  # visit each listing's own page for mileage/VIN/damage detail (slower, more thorough)
+delay_seconds: 2       # polite delay between page loads
+headless: true         # set false to watch the browser while debugging
+
+# --- Email alerts for newly-appeared listings ---
+email:
+  enabled: false
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_username: "you@gmail.com"
+  smtp_password: "your_app_password"   # use an app password, not your real Gmail password
+  from_address: "you@gmail.com"
+  to_addresses:
+    - "you@gmail.com"
+  # Optional: only email new listings at these risk levels (requires
+  # scoring.enabled: true below). Remove/comment out to email all new
+  # listings regardless of risk.
+  alert_risk_labels:
+    - "Low Risk"
+    - "Medium Risk"
+
+# --- Low-risk scoring rules ---
+# A transparent, additive point system: higher score = higher risk.
+# Every listing gets a risk_score, risk_label (Low/Medium/High Risk), and
+# risk_reasons (a plain-English breakdown of what drove the score) written
+# to the CSV and database. Tune every number below to match how you
+# actually judge a "fix and flip" deal -- there's nothing magic about the
+# defaults, they're just a reasonable starting point.
+#
+# NOTE: scoring depends heavily on scrape_details being true above, since
+# run_and_drive / keys_available / odometer_status / damage description
+# usually only appear on the listing's own detail page, not the search card.
+scoring:
+  enabled: true
+
+  run_and_drive:
+    "yes": -5        # confirmed running/driving is a strong low-risk signal
+    "no": 8
+    unknown: 3
+
+  keys_available:
+    "yes": -2
+    "no": 4
+    unknown: 1
+
+  odometer_status:
+    actual: -1
+    not_actual: 6   # tampered/rolled-back odometers are a real red flag
+    exempt: 2
+    unknown: 1
+
+  # Matched against the SA Code 1-5 condition/damage code, e.g. "Code 3A".
+  # Uses substring matching, so "Code 3A" also matches a key of "Code 3".
+  # More specific keys should come first if you want them checked first.
+  damage_code_points:
+    "Code 2": -2      # previously registered, no accident damage recorded
+    "Code 3A": 0       # rebuilt, damage cleared -- neutral starting point
+    "Code 3B": 4
+    "Code 3C": 7
+    "Code 4": 10        # irreparable / not for road use -- high risk by default
+  damage_code_unknown_points: 2   # code present but not in the list above
+
+  # Keyword scan over primary_damage + secondary_damage + description.
+  damage_keywords:
+    cosmetic:
+      points: -2
+      terms: [bumper, scratch, dent, hail, paint, panel, mirror, cosmetic, scrape, windscreen, glass]
+    structural:
+      points: 10
+      terms: [frame, chassis, flood, flooded, fire, burnt, roof, airbag, engine, gearbox, transmission, structural, submerged, water damage]
+
+  mileage_thresholds:       # km, parsed from the mileage field
+    low_max: 80000
+    low_points: -2
+    high_min: 200000
+    high_points: 3
+
+  # Only applies if GoBid publishes an estimated/retail value for a lot.
+  bid_to_value_ratio:
+    high_ratio_threshold: 0.75   # current bid >= 75% of estimated value
+    high_ratio_points: 4          # ...leaves less room for repair costs + margin
+
+  # Final label boundaries, based on total accumulated score.
+  thresholds:
+    low_max: 0        # score <= 0      -> "Low Risk"
+    medium_max: 8      # 0 < score <= 8  -> "Medium Risk"
+                        # score > 8       -> "High Risk"
