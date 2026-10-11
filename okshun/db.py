@@ -12,6 +12,7 @@ from typing import Iterable, Optional
 from dataclasses import fields
 
 from okshun.schema import DDL, Listing, SourceAdapter, estimate_all_in, upsert
+from okshun import repairs
 from okshun.scoring import load_rules, score
 
 DEFAULT_DB = Path(os.environ.get("OKSHUN_DB", Path(__file__).resolve().parent.parent / "okshun.db"))
@@ -22,6 +23,7 @@ SORTS = {
     "risk": "risk_score ASC, auction_end ASC",
     "gap": "CASE WHEN damage_code IN ('code_4','code_5') THEN 1 ELSE 0 END, (estimated_retail - est_all_in_cost) DESC",
     "newest": "year DESC, mileage_km ASC",
+    "profit": "profit_low IS NULL, profit_low DESC, profit_high DESC",
 }
 
 
@@ -50,9 +52,11 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
     return added
 
 
-def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: Optional[dict] = None) -> dict:
-    """Run adapters, add derived fields, score, store. Lots a source no longer lists are marked closed."""
+def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: Optional[dict] = None,
+           repair_rules: Optional[dict] = None) -> dict:
+    """Run adapters, add derived fields, score, estimate repairs, store. Lots a source no longer lists are closed."""
     rules = rules or load_rules()
+    repair_rules = repair_rules or repairs.load_rules()
     run_start = datetime.now().isoformat(timespec="seconds")
     counts: dict[str, int] = {}
     for adapter in adapters:
@@ -60,6 +64,7 @@ def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: O
         for lst in listings:
             estimate_all_in(lst)
             score(lst, rules)
+            repairs.estimate(lst, repair_rules)
             counts[lst.source] = counts.get(lst.source, 0) + 1
         upsert(conn, listings)
     for source in counts:
@@ -73,7 +78,7 @@ def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: O
 
 def _decode(row: sqlite3.Row, sources: dict) -> dict:
     d = dict(row)
-    for key in ("photo_urls", "risk_reasons"):
+    for key in ("photo_urls", "risk_reasons", "repair_items"):
         d[key] = json.loads(d[key] or "[]")
     d.pop("raw", None)
     src = sources.get(d["source"], {})

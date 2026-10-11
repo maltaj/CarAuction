@@ -112,6 +112,18 @@ class Listing:
     # media
     photo_urls: list[str] = field(default_factory=list)
 
+    # repair estimate (filled by okshun.repairs, never by adapters)
+    car_class: Optional[str] = None
+    resale_value: Optional[float] = None    # retail value, discounted for Code 3 rebuilds
+    repair_low: Optional[float] = None
+    repair_high: Optional[float] = None
+    road_low: Optional[float] = None
+    road_high: Optional[float] = None
+    profit_low: Optional[float] = None       # worst case; None when something needs inspecting first
+    profit_high: Optional[float] = None      # best case
+    repair_verdict: Optional[str] = None
+    repair_items: list[dict] = field(default_factory=list)
+
     # scoring (filled by the shared risk engine, never by adapters)
     risk_score: Optional[int] = None
     risk_label: Optional[str] = None
@@ -289,8 +301,8 @@ def _row(lst: Listing) -> dict:
             d[k] = v.value
         elif isinstance(v, (datetime, date)):
             d[k] = v.isoformat()
-    d["photo_urls"] = json.dumps(d["photo_urls"])
-    d["risk_reasons"] = json.dumps(d["risk_reasons"])
+    for key in ("photo_urls", "risk_reasons", "repair_items"):
+        d[key] = json.dumps(d[key])
     d["raw"] = json.dumps(d["raw"], default=str)
     if d["vat_on_hammer"] is not None:
         d["vat_on_hammer"] = int(d["vat_on_hammer"])

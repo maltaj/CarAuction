@@ -1,0 +1,70 @@
+# Repair-cost estimate rules for Okshun.
+#
+# PLACEHOLDER FIGURES. These ranges are starting guesses, not verified South
+# African repair prices. Replace them with your own repair history and panel
+# beater quotes before relying on them. Amounts are rand, VAT included, for a
+# budget car (class multiplier 1.0).
+#
+# How it works: each damage item is matched against the lot's damage fields and
+# description. The first matching item in a group wins, so put specific items
+# before broad ones. skip_if drops an item when a listed item already covers it
+# (a bumper repair includes its paint). Items marked inspect_first have no reliable range from a
+# description alone: the estimate says "inspect first" until the buyer enters
+# their own figure.
+
+# Parts and labour scale with the car. First matching make/model wins.
+car_classes:
+  - name: Luxury
+    multiplier: 2.2
+    makes: [BMW, Mercedes-Benz, Audi, Volvo, Lexus, Land Rover, Porsche, Jaguar]
+  - name: Mid-range
+    multiplier: 1.3
+    makes: [Toyota, Ford, Isuzu, Mahindra, Haval, Nissan, Mazda, Honda]
+    budget_models: [NP200]          # these models of mid-range makes count as budget
+  - name: Mid-range
+    multiplier: 1.3
+    makes: [Volkswagen]
+    budget_models: [Polo Vivo]
+  - name: Budget
+    multiplier: 1.0
+    makes: []                       # everything else
+
+damage_items:
+  # group: only one item per group is counted (most specific first)
+  - {id: chassis,    group: structure, label: "Chassis or frame straightening", terms: [chassis, frame], low: 25000, high: 70000}
+  - {id: rollover,   group: structure, label: "Rollover and roof pillar repair", terms: [rollover, roof pillar], low: 30000, high: 80000}
+  - {id: flood,      group: flood,     label: "Flood damage", terms: [flood, water in cabin, submerged, water damage], inspect_first: true}
+  - {id: fire,       group: fire,      label: "Fire damage", terms: [fire, burnt], inspect_first: true}
+  - {id: gearbox,    group: drivetrain, label: "Gearbox fault", terms: [gearbox, transmission], inspect_first: true}
+  - {id: engine,     group: drivetrain, label: "Engine fault", terms: [engine], inspect_first: true}
+  - {id: airbags,    group: airbags,   label: "Airbags and sensors", terms: [airbag], low: 15000, high: 40000}
+  - {id: front_end,  group: front,     label: "Front-end collision repair", terms: [front-end collision, front impact], low: 15000, high: 45000}
+  - {id: hail,       group: body,      label: "Hail damage repair", terms: [hail], low: 12000, high: 30000}
+  - {id: panel,      group: body,      label: "Panel repair and respray", terms: [panel, dent], low: 2500, high: 7000}
+  - {id: bumper,     group: bumper,    label: "Bumper repair or replace", terms: [bumper], low: 2500, high: 6000}
+  - {id: paint,      group: paint,     label: "Paint touch-up", terms: [scratch, scrape, paint, faded], low: 1500, high: 4500, skip_if: [panel, bumper, hail]}
+  - {id: windscreen, group: glass,     label: "Windscreen replacement", terms: [windscreen, glass], low: 2500, high: 6000}
+  - {id: mirror,     group: mirror,    label: "Side mirror replacement", terms: [mirror], low: 1000, high: 3500}
+
+# Added from lot fields rather than description words.
+condition_items:
+  no_keys:      {label: "Replacement keys and coding", low: 2000, high: 6000}
+  non_runner:   {label: "Non-runner, cause not stated", inspect_first: true}
+  baseline:     {label: "Service, tyres and small fixes", low: 2000, high: 6000}
+  high_mileage: {label: "Extra wear items (over 150 000 km)", low: 2000, high: 7000, min_km: 150000}
+
+# Getting the car home and legal. Not scaled by car class.
+road_items:
+  transport:   {label: "Transport from the auction yard", low: 1500, high: 4000}
+  towing:      {label: "Towing (non-runner)", low: 2000, high: 5000}
+  roadworthy:  {label: "Roadworthy certificate", low: 600, high: 1500}
+  code3:       {label: "Code 3: police clearance, inspection and re-registration", low: 2000, high: 5000}
+  registration: {label: "Licence and registration transfer", low: 800, high: 2000}
+
+# Rebuilt (Code 3) cars usually resell below a clean car's retail value.
+# Profit uses retail value minus this share for Code 3 lots. Placeholder: tune it.
+code3_resale_discount: 0.25
+
+verdict:
+  min_profit: 10000        # below this at best, it's not worth the work
+  good_margin: 0.15        # worst-case profit at least 15% of total outlay = worth a look

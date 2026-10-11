@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from okshun import db
+from okshun import db, repairs
 from okshun.adapters import SOURCES
 from okshun.adapters.demo import DemoAdapter
 
@@ -73,7 +73,7 @@ def list_listings(
     max_year: Optional[int] = None,
     max_cost: Optional[float] = None,
     max_km: Optional[int] = None,
-    sort: str = Query(default="ending", pattern="^(ending|cost|risk|gap|newest)$"),
+    sort: str = Query(default="ending", pattern="^(ending|cost|risk|gap|newest|profit)$"),
     limit: int = Query(default=30, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -101,6 +101,13 @@ def get_vehicle_checks() -> list[dict]:
     """History/odometer services a buyer can open with the lot's VIN. Okshun never logs in for them."""
     with open(CHECKS_FILE, encoding="utf-8") as f:
         return yaml.safe_load(f)["providers"]
+
+
+@app.get("/api/repair-rules")
+def get_repair_rules() -> dict:
+    """Verdict thresholds, so the front end can recompute profit when a buyer edits repair lines."""
+    rules = repairs.load_rules()
+    return {"verdict": rules.get("verdict", {})}
 
 
 @app.get("/api/sources")

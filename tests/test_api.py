@@ -68,3 +68,16 @@ def test_vehicle_check_providers(client):
 def test_listing_exposes_identifiers_for_checks(client):
     item = client.get("/api/listings", params={"limit": 1}).json()["items"][0]
     assert {"vin", "engine_number", "registration"} <= item.keys()
+
+
+def test_profit_sort_and_repair_fields(client):
+    res = client.get("/api/listings", params={"sort": "profit", "limit": 100}).json()
+    lows = [i["profit_low"] for i in res["items"] if i["profit_low"] is not None]
+    assert lows == sorted(lows, reverse=True)
+    first = res["items"][0]
+    assert first["repair_items"] and first["repair_verdict"] and first["resale_value"]
+
+
+def test_repair_rules_endpoint(client):
+    v = client.get("/api/repair-rules").json()["verdict"]
+    assert v["min_profit"] > 0 and 0 < v["good_margin"] < 1

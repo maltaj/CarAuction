@@ -20,7 +20,7 @@
     drawer: $("#drawer"), drawerBody: $("#drawer-body"), scrim: $("#scrim"), demoNote: $("#demo-note"),
   };
 
-  const state = { offset: 0, total: 0, facets: null, lastFocus: null, providers: [] };
+  const state = { offset: 0, total: 0, facets: null, lastFocus: null, providers: [], verdictRules: { min_profit: 10000, good_margin: 0.15 } };
 
   // ---------- this browser's storage (history checks, preferred service) ----------
   const store = {
@@ -38,7 +38,7 @@
   // ---------- formatting ----------
   // South African style: spaces between thousands (R 417 720).
   const nf = { format: (v) => Math.round(Number(v)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0") };
-  const rand = (v) => (v == null ? "–" : `R ${nf.format(v)}`);
+  const rand = (v) => (v == null ? "–" : `R\u00a0${nf.format(v)}`);
   const km = (v) => (v == null ? "–" : `${nf.format(v)} km`);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -114,6 +114,46 @@
     els.demoNote.hidden = !(f.source || []).some((s) => /demo/i.test(s.label));
   }
 
+  // ---------- repair estimate and profit ----------
+  const repairKey = (it) => `okshun.repairs.${it.source}/${it.source_lot_id}`;
+  const V = { worth: "Worth a look", thin: "Thin margin", not: "Not worth it at this price", inspect: "Inspect first", parts: "Parts only" };
+  const V_CLASS = { [V.worth]: "v-worth", [V.thin]: "v-thin", [V.not]: "v-not", [V.inspect]: "v-inspect", [V.parts]: "v-parts" };
+  const randK = (v) => `${v < 0 ? "−" : ""}R ${nf.format(Math.round(Math.abs(v) / 1000))}k`;
+
+  // Same logic as okshun/repairs.py, applied to the buyer's own edits.
+  function computeDeal(it, edits = store.get(repairKey(it)) || {}) {
+    if (it.repair_verdict === V.parts) return { verdict: V.parts, items: [], parts: true };
+    const over = edits.over || {}, skip = new Set(edits.skip || []);
+    const items = (it.repair_items || []).filter((i) => !skip.has(i.id)).map((i) => {
+      const o = over[i.id];
+      return o == null || o === "" ? { ...i } : { ...i, low: Number(o), high: Number(o), inspect: false, yours: true };
+    });
+    for (const c of edits.custom || []) items.push({ id: c.id, label: c.label, kind: "repair", low: Number(c.cost), high: Number(c.cost), inspect: false, yours: true, custom: true });
+    const sum = (kind, k) => items.filter((i) => i.kind === kind && !i.inspect).reduce((a, i) => a + i[k], 0);
+    const d = { items, repLow: sum("repair", "low"), repHigh: sum("repair", "high"), roadLow: sum("road", "low"), roadHigh: sum("road", "high"),
+      inspect: items.some((i) => i.inspect), resale: it.resale_value, allIn: it.est_all_in_cost, edited: !!(Object.keys(over).length || skip.size || (edits.custom || []).length) };
+    if (!d.resale || !d.allIn) { d.verdict = d.inspect ? V.inspect : null; return d; }
+    const outLow = d.allIn + d.repLow + d.roadLow, outHigh = d.allIn + d.repHigh + d.roadHigh;
+    d.profitHigh = d.resale - outLow;
+    d.profitLow = d.inspect ? null : d.resale - outHigh;
+    const r = state.verdictRules;
+    if (d.profitHigh < r.min_profit) d.verdict = V.not;
+    else if (d.inspect) d.verdict = V.inspect;
+    else if (d.profitLow >= r.min_profit && d.profitLow >= r.good_margin * outHigh) d.verdict = V.worth;
+    else d.verdict = V.thin;
+    return d;
+  }
+
+  function profitLine(it) {
+    const d = computeDeal(it);
+    if (!d.verdict) return "";
+    let text;
+    if (d.parts) text = "Parts only";
+    else if (d.profitLow == null) text = `Inspect first, at most ${randK(d.profitHigh)} profit`;
+    else text = `Profit ${randK(d.profitLow)} to ${randK(d.profitHigh)}`;
+    return `<div class="profit ${V_CLASS[d.verdict]}">${text}${d.edited ? " (yours)" : ""}</div>`;
+  }
+
   // ---------- history check results ----------
   function assess(it, rec) {
     const notes = [];
@@ -158,6 +198,7 @@
       <div class="money">
         <div><div class="allin">${rand(it.est_all_in_cost)}</div><div class="allin-label">all-in estimate</div></div>
         <div class="bidline">${bid}</div>
+        <span class="profit-slot">${profitLine(it)}</span>
         <div class="closes${c.soon ? " soon" : ""}">${c.text}</div>
       </div></button></li>`;
   }
@@ -248,10 +289,132 @@
       <p class="d-variant">${esc(it.variant || "")}</p>
       <div class="d-risk">${disc(it, true)}<div><h3>Why it scored ${scoreText(it.risk_score)}</h3>${reasonsList(it)}</div></div>
       <div class="section"><h3>What you'd pay</h3>${costTable(it)}</div>
+      ${dealSection(it)}
       <div class="section"><h3>Vehicle</h3><dl class="specs">${specs.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v || "–")}</dd>`).join("")}</dl></div>
       ${it.description ? `<div class="section"><h3>Auction house description</h3><p class="desc">${esc(it.description)}</p></div>` : ""}
       ${checkPanel(it)}
       <div class="d-action">${action}</div>`;
+  }
+
+  // ---------- worth fixing? ----------
+  const rangeText = (i) => (i.inspect ? "Inspect first" : i.low === i.high ? rand(i.low) : `${rand(i.low)} – ${rand(i.high)}`);
+
+  function dealSection(it) {
+    if (it.repair_verdict === V.parts) {
+      return `<div class="section deal"><h3>Worth fixing?</h3>
+        <div class="verdict-band v-parts"><strong>Parts only.</strong> ${esc(CODE_LABEL[it.damage_code] || "This code")} cars can't be registered for the road again, so there's no repair estimate. Value it on its parts.</div></div>`;
+    }
+    if (!it.repair_items || !it.repair_items.length) return "";
+    const edits = store.get(repairKey(it)) || {};
+    const over = edits.over || {}, skip = new Set(edits.skip || []);
+    const row = (i) => `<tr class="${skip.has(i.id) ? "skipped" : ""}">
+        <td>${esc(i.label)}</td>
+        <td class="est">${rangeText(i)}</td>
+        <td><label class="visually-hidden" for="ov-${i.id}">Your cost for ${esc(i.label)}</label>
+          <input class="yours" id="ov-${i.id}" data-id="${i.id}" type="number" min="0" step="100" inputmode="numeric" placeholder="Your cost" value="${over[i.id] ?? ""}"></td>
+        <td><label class="skip"><input type="checkbox" data-skip="${i.id}"${skip.has(i.id) ? " checked" : ""}> Skip</label></td></tr>`;
+    const custom = (edits.custom || []).map((c) => `<tr><td>${esc(c.label)}</td><td class="est">Your item</td><td class="yours-fixed">${rand(c.cost)}</td>
+        <td><button type="button" class="linkish" data-remove-custom="${esc(c.id)}">Remove</button></td></tr>`).join("");
+    const repairs = it.repair_items.filter((i) => i.kind === "repair"), road = it.repair_items.filter((i) => i.kind === "road");
+    const resaleNote = it.damage_code === "code_3" ? ` <span class="sub">(retail ${rand(it.estimated_retail)}, less the Code 3 resale discount)</span>` : "";
+    return `<div class="section deal" id="deal">
+      <h3>Worth fixing?</h3>
+      <div id="deal-summary"></div>
+      <table class="deal-table">
+        <thead><tr><th>Repairs</th><th>Estimate</th><th>Your cost</th><th><span class="visually-hidden">Skip</span></th></tr></thead>
+        <tbody>${repairs.map(row).join("")}${custom}</tbody>
+        <thead><tr><th colspan="4">Getting it on the road</th></tr></thead>
+        <tbody>${road.map(row).join("")}</tbody>
+      </table>
+      <form class="add-item" id="add-item">
+        <label class="field">Add a repair you spotted <input name="label" required maxlength="60" placeholder="e.g. Two front tyres"></label>
+        <label class="field">Cost <span class="money-input"><span aria-hidden="true">R</span><input name="cost" type="number" min="0" step="100" required inputmode="numeric"></span></label>
+        <button type="submit" class="btn btn-quiet">Add</button>
+      </form>
+      <p class="muted">Resale value: ${rand(it.resale_value)}${resaleNote}. Estimates come from the published damage details and placeholder price ranges, not a mechanic's quote. Your figures are saved in this browser.
+        <button type="button" class="linkish" id="deal-reset">Reset to estimate</button></p>
+    </div>`;
+  }
+
+  function renderDealSummary(it) {
+    const box = $("#deal-summary");
+    if (!box) return;
+    const d = computeDeal(it);
+    const profit = d.profitLow == null
+      ? (d.profitHigh == null ? "–" : `At most ${rand(d.profitHigh)}`)
+      : `${rand(d.profitLow)} to ${rand(d.profitHigh)}`;
+    const why = {
+      [V.worth]: "Even with the highest repair estimate, the margin is healthy.",
+      [V.thin]: "It can make money, but a few surprises would wipe out the margin.",
+      [V.not]: "Even with the lowest repair estimate, there's too little left over.",
+      [V.inspect]: "Some damage can't be priced from the description. Get it inspected, then enter your cost for those lines.",
+    }[d.verdict] || "";
+    const bidNow = it.current_bid ?? it.starting_bid;
+    const bidLabel = it.current_bid != null ? "current bid" : "starting bid";
+    let maxBid = "";
+    if (!d.inspect && d.resale && bidNow != null) {
+      // Invert estimate_all_in: all_in = (bid × (1 + commission) + fees) × VAT factor
+      const target = state.verdictRules.min_profit;
+      const vat = it.vat_on_hammer === false ? 1.15 : 1;
+      const comm = (it.buyers_commission_pct || 0) / 100;
+      const room = d.resale - d.repHigh - d.roadHigh - target;
+      const bid = Math.floor(((room / vat) - (it.fixed_fees || 0)) / (1 + comm) / 500) * 500;
+      maxBid = bid > 0
+        ? `<p class="max-bid">Bid up to <strong>${rand(bid)}</strong> to keep at least ${rand(target)} profit, even with the highest repair estimate.</p>`
+        : `<p class="max-bid">At these repair costs, no bid leaves ${rand(target)} profit.</p>`;
+    }
+    const basis = bidNow != null ? `<p class="muted">Profit is worked out at the ${bidLabel} of ${rand(bidNow)}. Every extra rand you bid comes off it, plus commission.</p>` : "";
+    box.innerHTML = `<div class="verdict-band ${V_CLASS[d.verdict] || ""}">
+        <p class="vb-head">${esc(d.verdict || "Not enough information")}</p><p class="vb-why">${why}</p></div>
+      <table class="costs deal-totals"><tbody>
+        <tr><td>Resale value</td><td>${rand(d.resale)}</td></tr>
+        <tr><td>All-in cost to buy</td><td>− ${rand(d.allIn)}</td></tr>
+        <tr><td>Repairs${d.inspect ? " (priced lines only)" : ""}</td><td>− ${d.repLow === d.repHigh ? rand(d.repLow) : `${rand(d.repLow)} – ${rand(d.repHigh)}`}</td></tr>
+        <tr><td>Getting it on the road</td><td>− ${d.roadLow === d.roadHigh ? rand(d.roadLow) : `${rand(d.roadLow)} – ${rand(d.roadHigh)}`}</td></tr>
+        <tr class="total"><td>Profit</td><td>${profit}</td></tr>
+      </tbody></table>${maxBid}${basis}`;
+  }
+
+  function refreshRowProfit(it) {
+    const slot = els.lots.querySelector(`.lot-btn[data-source="${CSS.escape(it.source)}"][data-lot="${CSS.escape(it.source_lot_id)}"] .profit-slot`);
+    if (slot) slot.innerHTML = profitLine(it);
+  }
+
+  function wireDeal(it) {
+    const deal = $("#deal");
+    if (!deal) return;
+    const key = repairKey(it);
+    const save = (mutate) => {
+      const e = store.get(key) || {};
+      mutate(e);
+      if (!store.set(key, e)) $("#deal-summary").insertAdjacentHTML("beforeend", `<p class="muted">This browser blocks saving; your edits last until you close the lot.</p>`);
+      renderDealSummary(it);
+      refreshRowProfit(it);
+    };
+    deal.addEventListener("input", (ev) => {
+      const inp = ev.target.closest("input.yours");
+      if (!inp) return;
+      save((e) => { e.over = e.over || {}; if (inp.value === "") delete e.over[inp.dataset.id]; else e.over[inp.dataset.id] = Number(inp.value); });
+    });
+    deal.addEventListener("change", (ev) => {
+      const cb = ev.target.closest("input[data-skip]");
+      if (!cb) return;
+      cb.closest("tr").classList.toggle("skipped", cb.checked);
+      save((e) => { const s = new Set(e.skip || []); cb.checked ? s.add(cb.dataset.skip) : s.delete(cb.dataset.skip); e.skip = [...s]; });
+    });
+    const rerender = () => { deal.outerHTML = dealSection(it); wireDeal(it); };
+    deal.addEventListener("click", (ev) => {
+      const rm = ev.target.closest("[data-remove-custom]");
+      if (rm) { save((e) => { e.custom = (e.custom || []).filter((c) => c.id !== rm.dataset.removeCustom); }); rerender(); }
+    });
+    $("#add-item").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      save((e) => { e.custom = [...(e.custom || []), { id: `c${Date.now()}`, label: String(fd.get("label")).trim(), cost: Number(fd.get("cost")) }]; });
+      rerender();
+    });
+    $("#deal-reset").addEventListener("click", () => { store.del(key); renderDealSummary(it); refreshRowProfit(it); rerender(); });
+    renderDealSummary(it);
   }
 
   // ---------- history / odometer check panel ----------
@@ -368,6 +531,7 @@
     document.body.style.overflow = "hidden";
     $("#d-close").addEventListener("click", closeLot);
     wireCheck(it);
+    wireDeal(it);
     $("#d-close").focus();
   }
 
@@ -418,9 +582,10 @@
   (async () => {
     const p = readParams();
     try {
-      const [res, checks] = await Promise.all([fetch("/api/facets"), fetch("/api/vehicle-checks")]);
+      const [res, checks, rr] = await Promise.all([fetch("/api/facets"), fetch("/api/vehicle-checks"), fetch("/api/repair-rules")]);
       renderFacets(await res.json(), p);
       if (checks.ok) state.providers = await checks.json();
+      if (rr.ok) Object.assign(state.verdictRules, (await rr.json()).verdict || {});
     } catch {
       els.summary.textContent = "Couldn't load auctions. Check that the Okshun server is running, then refresh.";
       return;

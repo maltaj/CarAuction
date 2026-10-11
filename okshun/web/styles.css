@@ -196,6 +196,30 @@ legend + * { clear: both; }
 .d-action p { margin: 0; font-size: 14px; color: var(--muted); }
 
 /* Phones */
+/* Worth fixing? */
+.profit { font-size: 14px; font-weight: 600; margin-top: 2px; }
+.v-worth { --v: var(--risk-low); }
+.v-thin { --v: var(--risk-medium); }
+.v-not { --v: var(--risk-high); }
+.v-inspect { --v: var(--risk-medium); }
+.v-parts { --v: var(--muted); }
+.profit { color: var(--v, var(--muted)); }
+.verdict-band { border-left: 4px solid var(--v, var(--muted)); background: color-mix(in srgb, var(--v, var(--muted)) 9%, #FFFFFF); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; font-size: 15px; }
+.vb-head { font: 700 19px/1.2 var(--cond); color: var(--v, var(--ink)); margin: 0 0 2px; }
+.vb-why { margin: 0; }
+.deal-totals { margin-bottom: 12px; }
+.max-bid { font-size: 16px; margin: 0 0 6px; padding: 10px 14px; background: var(--teal-wash); border-radius: 8px; }
+.deal-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 14px; }
+.deal-table th { text-align: left; font-weight: 600; color: var(--muted); padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
+.deal-table td { padding: 6px 6px 6px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.deal-table td.est { white-space: nowrap; color: var(--muted); }
+.deal-table input.yours { width: 104px; height: 34px; border: 1px solid #C4CCC7; border-radius: 6px; padding: 0 8px; background: var(--surface); }
+.deal-table tr.skipped td:not(:last-child) { text-decoration: line-through; color: var(--muted); }
+.deal-table .skip { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.deal-table .skip input { accent-color: var(--teal); }
+.add-item { display: grid; grid-template-columns: 1fr 140px auto; gap: 10px; align-items: end; margin-bottom: 10px; }
+.add-item .btn { min-height: 40px; }
+
 /* History check */
 .field > select, .field > input, .money-input { min-width: 0; width: 100%; }
 .muted { color: var(--muted); font-size: 14px; margin: 0 0 10px; }
@@ -247,6 +271,11 @@ legend + * { clear: both; }
   .demo-note { font-size: 12px; }
   .drawer-body { padding: 16px 18px 32px; }
   .d-risk { grid-template-columns: 1fr; }
+  .add-item { grid-template-columns: 1fr 1fr; }
+  .add-item .field:first-child { grid-column: 1 / -1; }
+  .deal-table td.est { white-space: normal; font-size: 13px; }
+  .deal-table input.yours { width: 84px; }
+  .deal-table .skip { font-size: 13px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
