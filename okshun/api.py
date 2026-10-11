@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +26,7 @@ from okshun.adapters import SOURCES
 from okshun.adapters.demo import DemoAdapter
 
 WEB_DIR = Path(__file__).with_name("web")
+CHECKS_FILE = Path(__file__).with_name("vehicle_checks.yaml")
 DB_PATH = Path(os.environ.get("OKSHUN_DB", db.DEFAULT_DB))
 
 
@@ -92,6 +94,13 @@ def get_listing(source: str, lot_id: str, conn: sqlite3.Connection = Depends(get
 @app.get("/api/facets")
 def get_facets(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     return db.facets(conn, SOURCES)
+
+
+@app.get("/api/vehicle-checks")
+def get_vehicle_checks() -> list[dict]:
+    """History/odometer services a buyer can open with the lot's VIN. Okshun never logs in for them."""
+    with open(CHECKS_FILE, encoding="utf-8") as f:
+        return yaml.safe_load(f)["providers"]
 
 
 @app.get("/api/sources")

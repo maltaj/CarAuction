@@ -20,7 +20,20 @@
     drawer: $("#drawer"), drawerBody: $("#drawer-body"), scrim: $("#scrim"), demoNote: $("#demo-note"),
   };
 
-  const state = { offset: 0, total: 0, facets: null, lastFocus: null };
+  const state = { offset: 0, total: 0, facets: null, lastFocus: null, providers: [] };
+
+  // ---------- this browser's storage (history checks, preferred service) ----------
+  const store = {
+    get(k, fallback = null) { try { const v = localStorage.getItem(k); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } },
+  };
+  const checkKey = (it) => `okshun.check.${it.source}/${it.source_lot_id}`;
+  const FLAGS = [
+    ["finance", "Finance still owed"], ["stolen", "Stolen or police interest"],
+    ["writeoff", "Written off or salvage code"], ["accident", "Accident or claim history"],
+  ];
+  const MILEAGE_TOLERANCE = 1000; // km; report readings this far above the lot's mileage count as a mismatch
 
   // ---------- formatting ----------
   // South African style: spaces between thousands (R 417 720).
@@ -101,6 +114,33 @@
     els.demoNote.hidden = !(f.source || []).some((s) => /demo/i.test(s.label));
   }
 
+  // ---------- history check results ----------
+  function assess(it, rec) {
+    const notes = [];
+    let bad = false;
+    if (rec.km != null && it.mileage_km != null) {
+      if (rec.km - it.mileage_km > MILEAGE_TOLERANCE) {
+        bad = true;
+        notes.push({ bad: true, text: `The report shows ${km(rec.km)}, more than the ${km(it.mileage_km)} on this lot. The odometer may have been rolled back.` });
+      } else {
+        notes.push({ bad: false, text: `Mileage is consistent: ${km(rec.km)} on the report, ${km(it.mileage_km)} on the lot.` });
+      }
+    } else if (rec.km != null) {
+      notes.push({ bad: false, text: `The report shows ${km(rec.km)}. This lot doesn't list its mileage, so there's nothing to compare.` });
+    }
+    for (const [key, label] of FLAGS) if ((rec.flags || []).includes(key)) { bad = true; notes.push({ bad: true, text: label }); }
+    if (!notes.length) notes.push({ bad: false, text: "Nothing flagged on the report." });
+    return { bad, notes };
+  }
+
+  function rowChip(it) {
+    const rec = store.get(checkKey(it));
+    if (!rec) return "";
+    return assess(it, rec).bad
+      ? `<span class="chip bad">History flagged</span>`
+      : `<span class="chip ok">History checked</span>`;
+  }
+
   // ---------- lots ----------
   function lotRow(it) {
     const c = closesIn(it.auction_end);
@@ -112,7 +152,7 @@
       ${disc(it)}
       <div>
         <p class="lot-title">${esc(it.title)} <span class="lot-variant">${esc(it.variant || "")}</span></p>
-        <div class="lot-meta"><span class="plate">${esc(it.source_lot_id)}</span><span>${esc(it.source_name)}</span><span>${esc(it.province || "")}</span></div>
+        <div class="lot-meta"><span class="plate">${esc(it.source_lot_id)}</span><span>${esc(it.source_name)}</span><span>${esc(it.province || "")}</span><span class="chip-slot">${rowChip(it)}</span></div>
         <div class="facts">${facts.map((f) => `<span>${f}</span>`).join("")}</div>
       </div>
       <div class="money">
@@ -210,7 +250,106 @@
       <div class="section"><h3>What you'd pay</h3>${costTable(it)}</div>
       <div class="section"><h3>Vehicle</h3><dl class="specs">${specs.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v || "–")}</dd>`).join("")}</dl></div>
       ${it.description ? `<div class="section"><h3>Auction house description</h3><p class="desc">${esc(it.description)}</p></div>` : ""}
+      ${checkPanel(it)}
       <div class="d-action">${action}</div>`;
+  }
+
+  // ---------- history / odometer check panel ----------
+  function checkPanel(it) {
+    if (!state.providers.length) return "";
+    const ids = [["VIN", it.vin], ["Engine number", it.engine_number], ["Registration", it.registration]].filter(([, v]) => v);
+    const idHtml = ids.length
+      ? `<dl class="idents">${ids.map(([k, v]) => `<dt>${k}</dt><dd><code>${esc(v)}</code>
+          <button type="button" class="linkish copy" data-copy="${esc(v)}">Copy</button></dd>`).join("")}</dl>`
+      : `<p class="muted">${it.demo ? "This demo lot has no VIN. On real lots, Okshun copies the VIN for you." : "The auction house didn't publish a VIN for this lot. Ask them for it before you bid."}</p>`;
+    const pref = store.get("okshun.provider") || state.providers[0].id;
+    const opts = state.providers.map((p) => `<option value="${esc(p.id)}"${p.id === pref ? " selected" : ""}>${esc(p.name)}${p.mileage === "yes" ? " (mileage history)" : ""}</option>`).join("");
+    const rec = store.get(checkKey(it)) || {};
+    const flags = FLAGS.map(([k, label]) => `<label class="check"><input type="checkbox" name="flag" value="${k}"${(rec.flags || []).includes(k) ? " checked" : ""}> ${label}</label>`).join("");
+    return `<div class="section check-panel">
+      <h3>Check its history</h3>
+      <p class="muted">Optional. Use a vehicle history service you already have an account with. Okshun opens it for you; it never logs in or sees your account.</p>
+      ${idHtml}
+      <label class="field">Your history service <select id="chk-provider">${opts}</select></label>
+      <p class="chk-info" id="chk-info"></p>
+      <button type="button" class="btn btn-quiet" id="chk-open"></button>
+      <form class="chk-form" id="chk-form">
+        <h4>What did the report say?</h4>
+        <label class="field">Latest mileage on the report
+          <span class="money-input"><input type="number" name="km" min="0" step="1" inputmode="numeric" placeholder="e.g. 148000" value="${rec.km ?? ""}"><span aria-hidden="true">km</span></span>
+        </label>
+        <div class="opts">${flags}</div>
+        <button type="submit" class="btn">Save my check</button>
+      </form>
+      <div class="chk-result" id="chk-result" aria-live="polite"></div>
+    </div>`;
+  }
+
+  function showCheckResult(it) {
+    const box = $("#chk-result");
+    if (!box) return;
+    const rec = store.get(checkKey(it));
+    if (!rec) { box.innerHTML = ""; return; }
+    const { bad, notes } = assess(it, rec);
+    const prov = state.providers.find((p) => p.id === rec.provider);
+    const when = new Date(rec.savedAt).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" });
+    box.innerHTML = `<div class="verdict ${bad ? "bad" : "ok"}">
+      <p class="verdict-head">${bad ? "Check before you bid" : "No problems recorded"}</p>
+      <ul>${notes.map((n) => `<li class="${n.bad ? "bad" : ""}">${esc(n.text)}</li>`).join("")}</ul>
+      <p class="muted">Saved ${when}${prov ? ` from ${esc(prov.name)}` : ""}, in this browser only.
+        <button type="button" class="linkish" id="chk-remove">Remove my check</button></p></div>`;
+    $("#chk-remove").addEventListener("click", () => {
+      store.del(checkKey(it));
+      $("#chk-form").reset();
+      showCheckResult(it);
+      refreshRowChip(it);
+    });
+  }
+
+  function refreshRowChip(it) {
+    const row = els.lots.querySelector(`.lot-btn[data-source="${CSS.escape(it.source)}"][data-lot="${CSS.escape(it.source_lot_id)}"] .chip-slot`);
+    if (row) row.innerHTML = rowChip(it);
+  }
+
+  function wireCheck(it) {
+    const sel = $("#chk-provider");
+    if (!sel) return;
+    const info = $("#chk-info"), open = $("#chk-open");
+    const update = () => {
+      const p = state.providers.find((x) => x.id === sel.value);
+      store.set("okshun.provider", p.id);
+      const mileageNote = p.mileage === "yes"
+        ? "Its reports include mileage history, so you can spot a rolled-back odometer."
+        : "Its site doesn't mention mileage history, so it may not catch a rolled-back odometer.";
+      info.innerHTML = `<strong>Checks:</strong> ${esc(p.checks)}.<br><strong>Needs:</strong> ${esc(p.needs)}.<br>
+        <strong>Access:</strong> ${esc(p.access)}.<br>${mileageNote}`;
+      open.textContent = it.vin ? `Copy VIN and open ${p.name}` : `Open ${p.name}`;
+    };
+    sel.addEventListener("change", update);
+    update();
+    open.addEventListener("click", async () => {
+      const p = state.providers.find((x) => x.id === sel.value);
+      if (it.vin) { try { await navigator.clipboard.writeText(it.vin); } catch { /* clipboard blocked; VIN is shown above */ } }
+      window.open(p.url, "_blank", "noopener");
+    });
+    for (const b of document.querySelectorAll("#drawer .copy")) {
+      b.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; } catch { b.textContent = "Select and copy"; }
+      });
+    }
+    $("#chk-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const kmVal = fd.get("km");
+      const rec = { provider: sel.value, km: kmVal === "" ? null : Number(kmVal), flags: fd.getAll("flag"), savedAt: new Date().toISOString() };
+      if (!store.set(checkKey(it), rec)) {
+        $("#chk-result").innerHTML = `<p class="verdict bad">Couldn't save: this browser blocks local storage. Your entry is still shown until you close the lot.</p>`;
+        return;
+      }
+      showCheckResult(it);
+      refreshRowChip(it);
+    });
+    showCheckResult(it);
   }
 
   async function openLot(source, lot, trigger) {
@@ -228,6 +367,7 @@
     requestAnimationFrame(() => requestAnimationFrame(() => els.drawer.classList.remove("entering")));
     document.body.style.overflow = "hidden";
     $("#d-close").addEventListener("click", closeLot);
+    wireCheck(it);
     $("#d-close").focus();
   }
 
@@ -278,8 +418,9 @@
   (async () => {
     const p = readParams();
     try {
-      const res = await fetch("/api/facets");
+      const [res, checks] = await Promise.all([fetch("/api/facets"), fetch("/api/vehicle-checks")]);
       renderFacets(await res.json(), p);
+      if (checks.ok) state.providers = await checks.json();
     } catch {
       els.summary.textContent = "Couldn't load auctions. Check that the Okshun server is running, then refresh.";
       return;

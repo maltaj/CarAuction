@@ -54,3 +54,17 @@ def test_front_end_is_served(client):
     page = client.get("/")
     assert page.status_code == 200 and "Okshun" in page.text
     assert client.get("/app.js").status_code == 200
+
+
+def test_vehicle_check_providers(client):
+    providers = client.get("/api/vehicle-checks").json()
+    ids = {p["id"] for p in providers}
+    assert {"transunion", "firstcheck", "saia"} <= ids
+    for p in providers:
+        assert p["url"].startswith("https://") and p["mileage"] in ("yes", "no")
+        assert p["checks"] and p["needs"] and p["access"]
+
+
+def test_listing_exposes_identifiers_for_checks(client):
+    item = client.get("/api/listings", params={"limit": 1}).json()["items"][0]
+    assert {"vin", "engine_number", "registration"} <= item.keys()

@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
-from okshun.schema import DDL, SourceAdapter, estimate_all_in, upsert
+from dataclasses import fields
+
+from okshun.schema import DDL, Listing, SourceAdapter, estimate_all_in, upsert
 from okshun.scoring import load_rules, score
 
 DEFAULT_DB = Path(os.environ.get("OKSHUN_DB", Path(__file__).resolve().parent.parent / "okshun.db"))
@@ -26,8 +28,26 @@ SORTS = {
 def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path or DEFAULT_DB), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(DDL)
+    except sqlite3.OperationalError:
+        pass  # an older table lacks columns the indexes need; migrate, then retry
+    migrate(conn)
     conn.executescript(DDL)
     return conn
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    """Add any Listing columns an older database is missing, so you never have to delete okshun.db."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(listings)")}
+    added = []
+    for f in fields(Listing):
+        if f.name not in have:
+            kind = "INTEGER" if f.type in ("Optional[int]", "int") else "REAL" if "float" in str(f.type) else "TEXT"
+            conn.execute(f'ALTER TABLE listings ADD COLUMN "{f.name}" {kind}')
+            added.append(f.name)
+    conn.commit()
+    return added
 
 
 def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: Optional[dict] = None) -> dict:

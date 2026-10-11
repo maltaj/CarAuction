@@ -76,6 +76,8 @@ class Listing:
     year: Optional[int] = None
     mileage_km: Optional[int] = None
     vin: Optional[str] = None
+    engine_number: Optional[str] = None   # some history checks need it with the VIN
+    registration: Optional[str] = None    # number plate, when the house publishes it
     fuel: Optional[str] = None
     transmission: Optional[str] = None
     body_type: Optional[str] = None
@@ -245,7 +247,8 @@ CREATE TABLE IF NOT EXISTS listings (
     source_lot_id       TEXT NOT NULL,
     url                 TEXT NOT NULL,
     make TEXT, model TEXT, variant TEXT, year INTEGER,
-    mileage_km INTEGER, vin TEXT, fuel TEXT, transmission TEXT, body_type TEXT,
+    mileage_km INTEGER, vin TEXT, engine_number TEXT, registration TEXT,
+    fuel TEXT, transmission TEXT, body_type TEXT,
     damage_code TEXT, damage_code_raw TEXT,
     primary_damage TEXT, secondary_damage TEXT,
     runs_and_drives TEXT, keys_available TEXT, odometer_status TEXT,
