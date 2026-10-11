@@ -36,7 +36,7 @@ damage_keywords:
     terms: [bumper, scratch, dent, hail, paint, panel, mirror, cosmetic, scrape, windscreen, glass]
   structural:
     points: 10
-    terms: [frame, chassis, flood, flooded, fire, burnt, roof, airbag, engine, gearbox, transmission, structural, submerged, water damage]
+    terms: [frame, chassis, flood, flooded, fire, burnt, roof pillar, rollover, airbag, engine, gearbox, transmission, structural, submerged, water damage]
 
 mileage_thresholds:
   low_max: 80000

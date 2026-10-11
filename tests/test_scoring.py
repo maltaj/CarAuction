@@ -44,3 +44,11 @@ def test_all_in_cost_includes_commission_fees_and_vat():
     lst = make(current_bid=100_000, buyers_commission_pct=10, fixed_fees=2_500, vat_on_hammer=False)
     estimate_all_in(lst)
     assert lst.est_all_in_cost == round((100_000 + 10_000 + 2_500) * 1.15, 2)
+
+
+def test_hail_on_the_roof_is_cosmetic_not_structural():
+    lst = score(make(primary_damage="hail damage to roof and bonnet"), RULES)
+    assert not any("structural" in r for r in lst.risk_reasons)
+    assert any("cosmetic" in r and "hail" in r for r in lst.risk_reasons)
+    rolled = score(make(primary_damage="rollover, roof pillars damaged"), RULES)
+    assert any("structural" in r for r in rolled.risk_reasons)
