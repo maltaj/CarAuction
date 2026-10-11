@@ -12,8 +12,11 @@ from typing import Iterable, Optional
 from dataclasses import fields
 
 from okshun.schema import DDL, Listing, SourceAdapter, estimate_all_in, upsert
+from urllib.parse import parse_qs
+
 from okshun import repairs
 from okshun.scoring import load_rules, score
+from okshun.users import USER_DDL
 
 DEFAULT_DB = Path(os.environ.get("OKSHUN_DB", Path(__file__).resolve().parent.parent / "okshun.db"))
 
@@ -30,6 +33,8 @@ SORTS = {
 def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path or DEFAULT_DB), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(USER_DDL)
     try:
         conn.executescript(DDL)
     except sqlite3.OperationalError:
@@ -106,6 +111,10 @@ def _where(f: dict, now: str) -> tuple[str, list]:
         if values:
             clauses.append(f"{col} IN ({','.join('?' * len(values))})")
             params.extend(values)
+    keys = [k for k in (f.get("keys") or []) if k]
+    if keys:
+        clauses.append(f"(source || '/' || source_lot_id) IN ({','.join('?' * len(keys))})")
+        params.extend(keys)
     if f.get("runs"):
         clauses.append("runs_and_drives = 'yes'")
     if f.get("min_year"):
@@ -117,6 +126,21 @@ def _where(f: dict, now: str) -> tuple[str, list]:
     if f.get("max_km"):
         clauses.append("mileage_km <= ?"); params.append(int(f["max_km"]))
     return " AND ".join(clauses), params
+
+
+MULTI_FILTERS = ("make", "province", "source", "risk", "code", "body", "keys")
+SINGLE_FILTERS = ("q", "min_year", "max_year", "max_cost", "max_km")
+
+
+def filters_from_query(qs: str) -> dict:
+    """Turn a saved search's query string (the app's own URL) into search filters."""
+    parsed = parse_qs(qs.lstrip("?"))
+    f: dict = {k: parsed.get(k, []) for k in MULTI_FILTERS if k != "keys"}
+    for k in SINGLE_FILTERS:
+        if parsed.get(k):
+            f[k] = parsed[k][0]
+    f["runs"] = parsed.get("runs", ["false"])[0] == "true"
+    return f
 
 
 def search(conn: sqlite3.Connection, filters: dict, sources: dict, sort: str = "ending",

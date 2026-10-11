@@ -14,13 +14,23 @@
   <header class="bar">
     <div class="wrap bar-inner">
       <a class="wordmark" href="/" aria-label="Okshun home">Okshun</a>
-      <p class="demo-note" id="demo-note" hidden>Demo data<span class="more-words"> from fictional auction houses</span></p>
+      <nav class="bar-nav" aria-label="Your Okshun">
+        <button type="button" class="navbtn" id="nav-watch" aria-pressed="false">Watchlist <span class="badge" id="watch-count" hidden></span></button>
+        <button type="button" class="navbtn" id="nav-alerts" hidden>Alerts <span class="badge" id="alert-count" hidden></span></button>
+        <button type="button" class="navbtn" id="nav-account">Sign in</button>
+      </nav>
     </div>
   </header>
 
   <section class="intro wrap">
-    <h1>Every car auction in one search</h1>
-    <p class="summary" id="summary" aria-live="polite">Loading auctions…</p>
+    <p class="demo-note" id="demo-note" hidden>Demo data from fictional auction houses</p>
+    <h1 id="page-title">Every car auction in one search</h1>
+    <div class="summary-row">
+      <p class="summary" id="summary" aria-live="polite">Loading auctions…</p>
+      <button type="button" class="linkish" id="save-search" hidden>Save this search</button>
+      <button type="button" class="linkish" id="back-all" hidden>Show all lots</button>
+    </div>
+    <p class="watch-banner" id="watch-banner" hidden></p>
     <form class="searchrow" id="search-form" role="search">
       <label class="visually-hidden" for="q">Search make, model or damage</label>
       <input id="q" name="q" type="search" placeholder="Search make, model or damage, e.g. Hilux or hail" autocomplete="off">
@@ -93,6 +103,30 @@
       <p class="footnote">Okshun doesn't take bids. You register, pay the deposit and bid on the auction house's own site. Risk scores and all-in costs are estimates from published lot details; inspect before you bid.</p>
     </section>
   </main>
+
+  <div class="compare-tray" id="compare-tray" hidden>
+    <div class="wrap tray-inner">
+      <p id="compare-text"></p>
+      <button type="button" class="btn" id="compare-open">Compare</button>
+      <button type="button" class="linkish" id="compare-clear">Clear</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog class="auth" id="auth" aria-labelledby="auth-title">
+    <form method="dialog" class="auth-form" id="auth-form" novalidate>
+      <button type="submit" class="d-close" value="cancel" formnovalidate aria-label="Close">×</button>
+      <h2 id="auth-title">Sign in</h2>
+      <p class="muted" id="auth-why">Keep your watchlist, checks and repair figures on every device, and get alerts.</p>
+      <label class="field">Email <input type="email" name="email" autocomplete="email" required></label>
+      <label class="field">Password <input type="password" name="password" autocomplete="current-password" required minlength="8"></label>
+      <p class="auth-error" id="auth-error" role="alert" hidden></p>
+      <button type="submit" class="btn" id="auth-submit" value="submit">Sign in</button>
+      <p class="muted auth-switch"><span id="auth-switch-text">New to Okshun?</span> <button type="button" class="linkish" id="auth-switch">Create an account</button></p>
+      <p class="muted small">We store only your email and a scrambled password. You can delete your account at any time.</p>
+    </form>
+  </dialog>
 
   <div class="scrim" id="scrim" hidden></div>
   <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title" hidden>

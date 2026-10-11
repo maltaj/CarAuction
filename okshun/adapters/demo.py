@@ -75,6 +75,7 @@ class DemoAdapter(SourceAdapter):
 
     def fetch_raw(self) -> Iterable[dict]:
         rng = random.Random(self.seed)
+        offset = 0 if self.seed == 42 else (self.seed % 89 + 1) * 1000  # other seeds get their own lot numbers
         for hid, hname, provinces, branch, profile, atype, comm, fees, count in HOUSES:
             prefix = LOT_PREFIX[hid]
             for i in range(count):
@@ -123,7 +124,7 @@ class DemoAdapter(SourceAdapter):
                     desc += " Non-runner, towing required."
 
                 yield dict(
-                    source=hid, house=hname, lot=f"{prefix}-{10200 + i * 7}",
+                    source=hid, house=hname, lot=f"{prefix}-{10200 + i * 7 + offset}",
                     make=make, model=model, variant=variant, body=body, year=year, km=km,
                     code=damage_code, primary=primary, secondary=secondary, runs=runs, keys=keys,
                     odo=odo, desc=desc, atype=atype, ends=ends, branch=branch,

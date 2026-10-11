@@ -22,17 +22,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from okshun import db, repairs
+from okshun.account_api import router as account_router
 from okshun.adapters import SOURCES
 from okshun.adapters.demo import DemoAdapter
+from okshun.deps import db_path, get_conn
 
 WEB_DIR = Path(__file__).with_name("web")
 CHECKS_FILE = Path(__file__).with_name("vehicle_checks.yaml")
-DB_PATH = Path(os.environ.get("OKSHUN_DB", db.DEFAULT_DB))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    conn = db.connect(DB_PATH)
+    conn = db.connect(db_path())
     now = datetime.now().isoformat(timespec="seconds")
     open_count = conn.execute(
         "SELECT COUNT(*) FROM listings WHERE status != 'closed' AND auction_end > ?", (now,)
@@ -43,15 +44,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Okshun", version="0.1.0", lifespan=lifespan)
-
-
-def get_conn():
-    conn = db.connect(DB_PATH)
-    try:
-        yield conn
-    finally:
-        conn.close()
+app = FastAPI(title="Okshun", version="0.2.0", lifespan=lifespan)
+app.include_router(account_router)
 
 
 @app.get("/api/health")
@@ -68,6 +62,7 @@ def list_listings(
     risk: list[str] = Query(default=[]),
     code: list[str] = Query(default=[]),
     body: list[str] = Query(default=[]),
+    keys: list[str] = Query(default=[], description="Only these lots, as source/lot_id (watchlist, compare)"),
     runs: bool = False,
     min_year: Optional[int] = None,
     max_year: Optional[int] = None,
@@ -79,7 +74,7 @@ def list_listings(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     filters = dict(q=q, make=make, province=province, source=source, risk=risk, code=code, body=body,
-                   runs=runs, min_year=min_year, max_year=max_year, max_cost=max_cost, max_km=max_km)
+                   keys=keys[:100], runs=runs, min_year=min_year, max_year=max_year, max_cost=max_cost, max_km=max_km)
     return db.search(conn, filters, SOURCES, sort=sort, limit=limit, offset=offset)
 
 

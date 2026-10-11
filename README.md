@@ -7,8 +7,10 @@ It collects auction listings, normalises them into one shared format, estimates 
 ## Status
 
 - **Web app** (`okshun/`): search across houses, filters (risk, cost, year, mileage, condition, house, province, body, make), five sort orders, a lot drawer with the risk breakdown and cost estimate, and a link to bid on the house's site. Works on phones and desktops.
-- **Worth fixing?**: every lot gets a repair estimate (always a range) from its published damage, a "getting it on the road" estimate (transport or towing, roadworthy, registration, Code 3 clearance), a profit range against resale value, a verdict (Worth a look, Thin margin, Not worth it, Inspect first, Parts only) and the highest bid that still leaves a minimum profit. Buyers can enter their own cost for any line, skip lines or add repairs they spotted; edits are kept in their browser. Flood, fire and engine or gearbox faults say "inspect first" instead of guessing. Code 3 resale is discounted, and Code 4/5 cars are valued as parts only. **Repair prices in `okshun/repair_rules.yaml` are placeholders**: replace them with your own repair costs and quotes.
-- **Optional history check**: in a lot's details, buyers pick a vehicle history service they already use (TransUnion Auto, FirstCheck, Lightstone Auto, AA Autofacts or SAIA VIN-Lookup). Okshun copies the VIN and opens that service, then the buyer records the report's mileage and any flags. A report mileage above the lot's mileage is flagged as a possible rolled-back odometer. Okshun never logs into these services; results are kept in the buyer's browser until user accounts exist. The provider list is in `okshun/vehicle_checks.yaml`.
+- **Worth fixing?**: every lot gets a repair estimate (always a range) from its published damage, a "getting it on the road" estimate (transport or towing, roadworthy, registration, Code 3 clearance), a profit range against resale value, a verdict (Worth a look, Thin margin, Not worth it, Inspect first, Parts only) and the highest bid that still leaves a minimum profit. Buyers can enter their own cost for any line, skip lines or add repairs they spotted; edits are kept in their browser, or in their account once signed in. Flood, fire and engine or gearbox faults say "inspect first" instead of guessing. Code 3 resale is discounted, and Code 4/5 cars are valued as parts only. **Repair prices in `okshun/repair_rules.yaml` are placeholders**: replace them with your own repair costs and quotes.
+- **Optional history check**: in a lot's details, buyers pick a vehicle history service they already use (TransUnion Auto, FirstCheck, Lightstone Auto, AA Autofacts or SAIA VIN-Lookup). Okshun copies the VIN and opens that service, then the buyer records the report's mileage and any flags. A report mileage above the lot's mileage is flagged as a possible rolled-back odometer. Okshun never logs into these services; results are kept in the buyer's browser, or in their account once signed in. The provider list is in `okshun/vehicle_checks.yaml`.
+- **Watchlist and compare**: star any lot to watch it, and see a banner when a watched lot closes within 2 hours. Tick up to four lots to compare all-in cost, profit after repairs, verdict, safe maximum bid, risk, mileage, damage and history check side by side, with the best of each marked.
+- **Accounts, saved searches and alerts**: buyers sign up with email and password. Their watchlist, history checks and repair figures move from the browser into the account and follow them to any device. "Save this search" turns current filters into an alert: new lots that match show under Alerts, as do watched lots closing within 2 hours. With SMTP configured, buyers also get one email digest per run (can be turned off per search and for reminders). Passwords are salted PBKDF2 hashes, sessions are random tokens stored only as hashes in an HttpOnly cookie, and buyers can delete their account and all its data.
 - **Data**: runs on demo data from five fictional houses (every name contains "Demo" and the app labels it). No real auction house is connected yet; each is added only with its written permission (see Data access).
 - **GoBid scraper** (`gobid_scraper.py`): personal-use tool for your own GoBid login. Setup and selector calibration: [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Not part of the public app.
 
@@ -22,6 +24,22 @@ uvicorn okshun.api:app --reload
 ```
 
 Open http://127.0.0.1:8000. On first start the app loads demo data into `okshun.db`. After changing any rules file, reload so every lot is recalculated: `python -m okshun.ingest`.
+
+Each ingest also checks saved searches and watchlists and creates alerts; `python -m okshun.alerts` does only that. Schedule ingest with cron or Task Scheduler once real feeds exist. To try alerts on demo data, save a search, then load a different demo batch with `python -m okshun.ingest --seed 7` (it replaces the current demo lots).
+
+### Email alerts (optional)
+
+Set these environment variables before running ingest or alerts:
+
+| Variable | Example |
+| --- | --- |
+| `OKSHUN_SMTP_HOST` | `smtp.gmail.com` |
+| `OKSHUN_SMTP_PORT` | `587` (default) |
+| `OKSHUN_SMTP_USER`, `OKSHUN_SMTP_PASSWORD` | an app password, not your normal password |
+| `OKSHUN_MAIL_FROM` | `alerts@yourdomain.co.za` |
+| `OKSHUN_BASE_URL` | `https://okshun.co.za` (used for links in emails) |
+
+Without them, alerts appear only in the app. When the site runs on HTTPS, also set `OKSHUN_SECURE_COOKIES=1`.
 
 Run the tests with `pytest`.
 
@@ -51,8 +69,10 @@ Adapters only fetch and map data. Fee estimates, scoring, storage and the API ar
 | `okshun/adapters/__init__.py` | Which sources the app runs, and how each house is shown |
 | `okshun/repairs.py`, `okshun/repair_rules.yaml` | Repair, road-cost and profit estimates with verdicts; tune damage items, car classes, Code 3 discount and thresholds in the YAML |
 | `okshun/vehicle_checks.yaml` | History/odometer services buyers can open from a lot, with what each one checks |
+| `okshun/users.py`, `okshun/account_api.py`, `okshun/deps.py` | Accounts, sessions, watchlist, per-lot notes, saved searches and their API |
+| `okshun/alerts.py` | New-match and closing-soon alerts, in-app list and optional email digests |
 | `okshun/db.py`, `okshun/ingest.py` | Ingest pipeline, search queries, automatic database upgrades |
-| `okshun/api.py` | JSON API (`/api/listings`, `/api/listings/{source}/{lot}`, `/api/facets`, `/api/sources`, `/api/vehicle-checks`, `/api/repair-rules`) and the static front end |
+| `okshun/api.py` | JSON API (`/api/listings`, `/api/listings/{source}/{lot}`, `/api/facets`, `/api/sources`, `/api/vehicle-checks`, `/api/repair-rules`, plus `/api/auth/*` and `/api/me/*` for accounts) and the static front end |
 | `okshun/web/` | Front end: plain HTML, CSS and JavaScript, no build step |
 | `gobid_scraper.py` | Personal GoBid scraper with its own scoring and email alerts |
 
