@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Okshun: every car auction in one search</title>
+  <meta name="description" content="Search South African car auctions in one place, with risk screening and all-in cost estimates.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="wrap bar-inner">
+      <a class="wordmark" href="/" aria-label="Okshun home">Okshun</a>
+      <p class="demo-note" id="demo-note" hidden>Demo data<span class="more-words"> from fictional auction houses</span></p>
+    </div>
+  </header>
+
+  <section class="intro wrap">
+    <h1>Every car auction in one search</h1>
+    <p class="summary" id="summary" aria-live="polite">Loading auctions…</p>
+    <form class="searchrow" id="search-form" role="search">
+      <label class="visually-hidden" for="q">Search make, model or damage</label>
+      <input id="q" name="q" type="search" placeholder="Search make, model or damage, e.g. Hilux or hail" autocomplete="off">
+      <label class="visually-hidden" for="sort">Sort by</label>
+      <select id="sort" name="sort">
+        <option value="ending">Closing soonest</option>
+        <option value="cost">Lowest all-in cost</option>
+        <option value="risk">Lowest risk</option>
+        <option value="gap">Biggest gap to retail</option>
+        <option value="newest">Newest cars</option>
+      </select>
+      <button type="button" class="filters-toggle" id="filters-toggle" aria-controls="filters" aria-expanded="false">
+        Filters <span class="badge" id="filter-count" hidden></span>
+      </button>
+    </form>
+  </section>
+
+  <main class="wrap layout">
+    <aside class="filters" id="filters" aria-label="Filters">
+      <div class="filters-head">
+        <h2>Filters</h2>
+        <button type="button" class="linkish" id="clear-filters">Clear all</button>
+        <button type="button" class="close-sheet" id="close-filters" aria-label="Close filters">Done</button>
+      </div>
+      <form id="filter-form">
+        <fieldset><legend>Risk</legend><div class="opts" data-facet="risk"></div></fieldset>
+        <fieldset>
+          <legend>All-in cost</legend>
+          <label class="field">Up to
+            <span class="money-input"><span aria-hidden="true">R</span><input type="number" name="max_cost" min="0" step="5000" inputmode="numeric" placeholder="Any"></span>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Year</legend>
+          <div class="pair">
+            <label class="field">From <select name="min_year" data-years></select></label>
+            <label class="field">To <select name="max_year" data-years></select></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Mileage</legend>
+          <label class="field">Up to
+            <select name="max_km">
+              <option value="">Any</option><option value="80000">80 000 km</option><option value="120000">120 000 km</option>
+              <option value="160000">160 000 km</option><option value="200000">200 000 km</option>
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Condition</legend>
+          <label class="check"><input type="checkbox" name="runs" value="true"> Runs and drives only</label>
+          <div class="opts" data-facet="code"></div>
+        </fieldset>
+        <fieldset><legend>Auction house</legend><div class="opts" data-facet="source"></div></fieldset>
+        <fieldset><legend>Province</legend><div class="opts" data-facet="province"></div></fieldset>
+        <fieldset><legend>Body</legend><div class="opts" data-facet="body"></div></fieldset>
+        <fieldset><legend>Make</legend><div class="opts" data-facet="make"></div></fieldset>
+      </form>
+    </aside>
+
+    <section class="results" aria-label="Auction lots">
+      <ol class="lots" id="lots"></ol>
+      <div class="empty" id="empty" hidden>
+        <p><strong>No cars match these filters.</strong></p>
+        <p>Remove a filter or raise the cost limit to see more lots.</p>
+        <button type="button" class="btn" id="empty-clear">Clear all filters</button>
+      </div>
+      <button type="button" class="btn btn-quiet more" id="more" hidden>Show more lots</button>
+      <p class="footnote">Okshun doesn't take bids. You register, pay the deposit and bid on the auction house's own site. Risk scores and all-in costs are estimates from published lot details; inspect before you bid.</p>
+    </section>
+  </main>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title" hidden>
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

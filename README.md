@@ -2,60 +2,59 @@
 
 Okshun (working name) brings South African car auctions into one place: search, screening and deal analysis, built for a fix-and-resell workflow.
 
-The tool collects auction listings, normalises them into one shared format, estimates the all-in cost (bid + buyer's commission + fees + VAT) and scores each vehicle for purchase risk. It does **not** place bids. Bidding always happens on the auction house's own site.
+It collects auction listings, normalises them into one shared format, estimates the all-in cost (bid + buyer's commission + fees + VAT) and scores each vehicle for purchase risk. It does **not** place bids. Bidding always happens on the auction house's own site.
 
 ## Status
 
-- `gobid_scraper.py` — logs into gobid.co.za, scrapes listings, scores risk, writes SQLite + CSV, sends email alerts. Setup, selector calibration and scheduling: see [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Selectors marked `# ADJUST ME` still need checking against the live site (`--debug-html`).
-- `listing_schema.py` — shared `Listing` schema, adapter contract, GoBid adapter (#1, mapped to the scraper's real fields), all-in cost estimate and SQLite storage with bid history.
-- Further auction houses — added only with the auction house's written permission (see Data access).
+- **Web app** (`okshun/`): search across houses, filters (risk, cost, year, mileage, condition, house, province, body, make), five sort orders, a lot drawer with the risk breakdown and cost estimate, and a link to bid on the house's site. Works on phones and desktops.
+- **Data**: runs on demo data from five fictional houses (every name contains "Demo" and the app labels it). No real auction house is connected yet; each is added only with its written permission (see Data access).
+- **GoBid scraper** (`gobid_scraper.py`): personal-use tool for your own GoBid login. Setup and selector calibration: [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Not part of the public app.
+
+## Run the web app
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate             # Windows (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+uvicorn okshun.api:app --reload
+```
+
+Open http://127.0.0.1:8000. On first start the app loads demo data into `okshun.db`. To reload it later: `python -m okshun.ingest`.
+
+Run the tests with `pytest`.
 
 ## How it fits together
 
 ```
-auction house data ──► SourceAdapter (one per house) ──► Listing
-                                                             │
-                                  estimate_all_in() ◄────────┤
-                                  risk scoring      ◄────────┤
-                                                             ▼
-                                              SQLite: listings + bid_history
-                                                             │
-                                                     CSV export / email alerts
+auction house data ──► SourceAdapter (one per house, okshun/adapters/) ──► Listing
+                                                                              │
+                                              estimate_all_in()  ◄────────────┤
+                                              scoring.score()    ◄────────────┤
+                                                                              ▼
+                                                       SQLite: listings + bid_history
+                                                                              │
+                                                     FastAPI (okshun/api.py) ──► web front end
 ```
 
-Each adapter only fetches and maps data. Fee estimates, scoring, storage and alerts are shared, so a new auction house needs only a new adapter.
+Adapters only fetch and map data. Fee estimates, scoring, storage and the API are shared, so connecting a new auction house means writing one adapter and registering it in `okshun/adapters/__init__.py`.
 
-## Quick start
+## Project layout
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-pip install -r requirements.txt
-playwright install chromium
-copy config.example.yaml config.yaml   # then add your GoBid login
-python gobid_scraper.py
-```
-
-To feed scraper output into the shared schema:
-
-```python
-import sqlite3
-from listing_schema import GoBidAdapter, estimate_all_in, upsert, DDL
-
-conn = sqlite3.connect("auctions.db")
-conn.executescript(DDL)
-
-listings = GoBidAdapter(scraped).run()   # scraped = gobid_scraper.Listing objects
-for l in listings:
-    estimate_all_in(l)
-upsert(conn, listings)
-```
-
-Set `default_commission_pct` and `default_fixed_fees` on `GoBidAdapter` to GoBid's published buyer's fees so the all-in cost estimate is complete.
+| Path | What it does |
+| --- | --- |
+| `okshun/schema.py` | Shared `Listing` dataclass, adapter contract, parsing helpers, all-in cost, SQLite schema and upsert |
+| `okshun/scoring.py`, `okshun/scoring_rules.yaml` | Risk scoring used for every source; tune points and thresholds in the YAML |
+| `okshun/adapters/demo.py` | Demo lots from fictional houses, with real SA model-year ranges |
+| `okshun/adapters/gobid.py` | Maps GoBid scraper output to `Listing` (personal use only) |
+| `okshun/adapters/__init__.py` | Which sources the app runs, and how each house is shown |
+| `okshun/db.py`, `okshun/ingest.py` | Ingest pipeline and search queries |
+| `okshun/api.py` | JSON API (`/api/listings`, `/api/listings/{source}/{lot}`, `/api/facets`, `/api/sources`) and the static front end |
+| `okshun/web/` | Front end: plain HTML, CSS and JavaScript, no build step |
+| `gobid_scraper.py` | Personal GoBid scraper with its own scoring and email alerts |
 
 ## Data access
 
-Auction houses' terms may prohibit automated data collection. Only collect data for personal use where permitted, and add a source to a shared or paid product only under a written agreement with that auction house.
+Auction houses' terms may prohibit automated data collection. Only collect data for personal use where permitted, and add a source to the public app only under a written agreement with that auction house.
 
 ## Secrets
 

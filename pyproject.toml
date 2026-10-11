@@ -1,0 +1,9 @@
+[project]
+name = "okshun"
+version = "0.1.0"
+description = "Search South African car auctions in one place, with risk screening and all-in cost estimates."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

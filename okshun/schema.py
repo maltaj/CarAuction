@@ -1,10 +1,10 @@
 """
-Shared listing schema for a multi-source SA car auction aggregator.
+Shared listing schema for Okshun, the multi-source SA car auction aggregator.
 
-Each auction house gets one adapter that turns its raw data (scraped page,
-API response, CSV export) into the same `Listing` shape. Scoring, alerts,
-CSV export and the database only ever see `Listing`, never source-specific
-fields. GoBid is adapter #1.
+Each auction house gets one adapter (okshun/adapters/) that turns its raw data
+(API response, CSV export, approved page collection) into the same `Listing`
+shape. Scoring, alerts, the API and the database only ever see `Listing`,
+never source-specific fields.
 """
 
 from __future__ import annotations
@@ -163,10 +163,10 @@ class SourceAdapter(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Adapter #1: GoBid (wraps the existing gobid_scraper.py output)
+# Parsing helpers shared by adapters
 # ---------------------------------------------------------------------------
 
-def _tri(v) -> Tri:
+def parse_tri(v) -> Tri:
     if v is None:
         return Tri.UNKNOWN
     s = str(v).strip().lower()
@@ -177,7 +177,7 @@ def _tri(v) -> Tri:
     return Tri.UNKNOWN
 
 
-def _code(v) -> SaDamageCode:
+def parse_code(v) -> SaDamageCode:
     if not v:
         return SaDamageCode.UNKNOWN
     digits = "".join(ch for ch in str(v) if ch.isdigit())
@@ -188,7 +188,7 @@ def _code(v) -> SaDamageCode:
     }.get(digits[:1], SaDamageCode.UNKNOWN)
 
 
-def _num(v) -> Optional[float]:
+def parse_num(v) -> Optional[float]:
     if v in (None, ""):
         return None
     s = re.sub(r"[^\d.]", "", str(v))  # "R 62,500" / "98 500 km" -> digits only
@@ -198,7 +198,7 @@ def _num(v) -> Optional[float]:
         return None
 
 
-def _year_make_model(title: Optional[str]):
+def parse_title(title: Optional[str]):
     """'2018 Toyota Hilux 2.4 GD-6' -> (2018, 'Toyota', 'Hilux 2.4 GD-6')."""
     m = re.match(r"\s*((?:19|20)\d{2})\s+(\S+)\s*(.*)", title or "")
     if not m:
@@ -206,7 +206,7 @@ def _year_make_model(title: Optional[str]):
     return int(m.group(1)), m.group(2), (m.group(3) or None)
 
 
-def _auction_type(v) -> AuctionType:
+def parse_auction_type(v) -> AuctionType:
     s = str(v or "").strip().lower()
     if "live" in s or "webcast" in s:
         return AuctionType.LIVE
@@ -215,61 +215,6 @@ def _auction_type(v) -> AuctionType:
     if "tender" in s:
         return AuctionType.TENDER
     return AuctionType.UNKNOWN
-
-
-class GoBidAdapter(SourceAdapter):
-    """Maps gobid_scraper.Listing objects (or their dicts) to the shared Listing."""
-
-    name = "gobid"
-    default_commission_pct = None  # ADJUST ME: GoBid's published buyer's fee (%)
-    default_fixed_fees = None      # ADJUST ME: admin / release fees (R)
-
-    def __init__(self, scraper_rows: Iterable):
-        # Accepts gobid_scraper.Listing dataclass objects or plain dicts.
-        self._rows = scraper_rows
-
-    def fetch_raw(self) -> Iterable[dict]:
-        for r in self._rows:
-            yield r if isinstance(r, dict) else asdict(r)
-
-    def to_listing(self, r: dict) -> Listing:
-        t_year, t_make, t_model = _year_make_model(r.get("title"))
-        year = r.get("year")
-        photos = r.get("photo_urls") or ""
-        risk_reasons = r.get("risk_reasons") or ""
-        return Listing(
-            source=self.name,
-            source_lot_id=str(r["lot_id"]),
-            url=r["url"],
-            make=r.get("make") or t_make,
-            model=r.get("model") or t_model,
-            variant=r.get("variant"),
-            year=int(_num(year)) if _num(year) else t_year,
-            mileage_km=int(_num(r.get("mileage")) or 0) or None,
-            vin=r.get("vin"),
-            damage_code=_code(r.get("damage_code")),
-            damage_code_raw=r.get("damage_code"),
-            primary_damage=r.get("primary_damage"),
-            secondary_damage=r.get("secondary_damage"),
-            runs_and_drives=_tri(r.get("run_and_drive")),
-            keys_available=_tri(r.get("keys_available")),
-            odometer_status=r.get("odometer_status"),
-            description=r.get("description"),
-            auction_type=_auction_type(r.get("auction_type")),
-            auction_end=r.get("auction_date"),
-            branch=r.get("branch"),
-            province=r.get("province"),
-            starting_bid=_num(r.get("starting_bid")),
-            current_bid=_num(r.get("current_bid")),
-            estimated_retail=_num(r.get("estimated_value")),
-            photo_urls=[p for p in photos.split(";") if p] if isinstance(photos, str) else list(photos),
-            # The scraper already scores with config.yaml rules; carry those over
-            # until scoring moves to the shared engine.
-            risk_score=r.get("risk_score"),
-            risk_label=r.get("risk_label"),
-            risk_reasons=[x.strip() for x in risk_reasons.split(";") if x.strip()]
-                         if isinstance(risk_reasons, str) else list(risk_reasons),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -369,18 +314,3 @@ def upsert(conn: sqlite3.Connection, listings: Iterable[Listing]) -> None:
             (lst.source, lst.source_lot_id, now, lst.current_bid, d["status"]),
         )
     conn.commit()
-
-
-# ---------------------------------------------------------------------------
-# Pipeline sketch
-# ---------------------------------------------------------------------------
-#
-#   adapters = [GoBidAdapter(gobid_rows)]          # later: ParkVillageAdapter(feed), ...
-#   conn = sqlite3.connect("auctions.db"); conn.executescript(DDL)
-#   for a in adapters:
-#       listings = a.run()
-#       for l in listings:
-#           estimate_all_in(l)
-#           score(l)        # your existing risk engine, rewritten to read Listing fields
-#       upsert(conn, listings)
-#   send_alerts(conn)       # filters on risk_label, province, make/model, est_all_in_cost
