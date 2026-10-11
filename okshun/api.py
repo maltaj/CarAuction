@@ -9,6 +9,7 @@ On first start with an empty database it loads demo data, unless OKSHUN_DEMO=0.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -18,10 +19,10 @@ from typing import Optional
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from okshun import db, repairs
+from okshun import alerts, calendar, db, repairs
 from okshun.account_api import router as account_router
 from okshun.adapters import SOURCES
 from okshun.adapters.demo import DemoAdapter
@@ -41,7 +42,29 @@ async def lifespan(app: FastAPI):
     if open_count == 0 and os.environ.get("OKSHUN_DEMO", "1") != "0":
         db.ingest(conn, [DemoAdapter()])
     conn.close()
+    interval = int(os.environ.get("OKSHUN_REMINDER_INTERVAL", "120"))
+    task = asyncio.create_task(_reminder_loop(interval)) if interval > 0 else None
     yield
+    if task:
+        task.cancel()
+
+
+def _check_once() -> dict:
+    c = db.connect(db_path())
+    try:
+        return alerts.run(c)
+    finally:
+        c.close()
+
+
+async def _reminder_loop(interval: int) -> None:
+    """Check saved searches, reminders and bid limits, and send notifications, every few minutes."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(_check_once)
+        except Exception as e:  # keep the loop alive; the next run tries again
+            print(f"[okshun] reminder check failed: {e}")
 
 
 app = FastAPI(title="Okshun", version="0.2.0", lifespan=lifespan)
@@ -84,6 +107,19 @@ def get_listing(source: str, lot_id: str, conn: sqlite3.Connection = Depends(get
     if not item:
         raise HTTPException(status_code=404, detail="Listing not found")
     return item
+
+
+@app.get("/api/listings/{source}/{lot_id}/calendar.ics")
+def listing_calendar(source: str, lot_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+    """A calendar event for the sale start (live) or closing time (timed), with a phone alarm."""
+    item = db.get(conn, source, lot_id, SOURCES)
+    if not item:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    ics = calendar.lot_event(item, base_url=os.environ.get("OKSHUN_BASE_URL", ""))
+    if not ics:
+        raise HTTPException(status_code=404, detail="This lot has no published auction time.")
+    return Response(ics, media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="okshun-{lot_id}.ics"'})
 
 
 @app.get("/api/facets")

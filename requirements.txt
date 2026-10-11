@@ -2,6 +2,7 @@
 fastapi>=0.110
 uvicorn>=0.29
 pyyaml>=6.0
+cryptography>=42   # phone notifications (Web Push)
 
 # GoBid scraper (personal use only)
 playwright>=1.45

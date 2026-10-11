@@ -25,7 +25,8 @@
   };
 
   const state = { offset: 0, total: 0, facets: null, lastFocus: null, providers: [], verdictRules: { min_profit: 10000, good_margin: 0.15 },
-    user: null, view: "all", compare: new Set(), authMode: "login", authReason: null };
+    user: null, view: "all", compare: new Set(), authMode: "login", authReason: null, lotReminders: {}, pushDevices: 0 };
+  const REMINDER_CHOICES = [[1440, "1 day"], [120, "2 hours"], [30, "30 minutes"], [15, "15 minutes"]];
   const COMPARE_MAX = 4;
 
   // ---------- this browser's storage (history checks, preferred service) ----------
@@ -64,7 +65,7 @@
         }
       } catch { /* storage unavailable */ }
     },
-    loadServer(d) { this.watch = new Set(d.watchlist || []); this.data = d.notes || {}; },
+    loadServer(d) { this.watch = new Set(d.watchlist || []); this.data = d.notes || {}; state.lotReminders = d.reminders || {}; state.pushDevices = d.push_devices || 0; },
     localSnapshot() { this.loadLocal(); return { watchlist: [...this.watch], notes: { ...this.data } }; },
     clearLocal() {
       store.del("okshun.watchlist");
@@ -120,6 +121,14 @@
     const d = Math.floor(h / 24);
     return { text: `Closes in ${d} day${d > 1 ? "s" : ""} ${h % 24} h`, soon: false };
   }
+  // Live webcast sales: what matters is when the sale starts and the lot's place in the running order.
+  function saleTiming(it) {
+    if (it.auction_type === "live" && it.auction_start && new Date(it.auction_start) > new Date()) {
+      const c = closesIn(it.auction_start);
+      return { text: c.text.replace("Closes in", "Live sale starts in") + (it.lot_number ? `, lot ${it.lot_number}` : ""), soon: c.soon };
+    }
+    return closesIn(it.auction_end);
+  }
   const closesAt = (iso) => iso ? new Date(iso).toLocaleString("en-ZA", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Not published";
   const scoreText = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0");
 
@@ -134,6 +143,7 @@
   function readParams() {
     const p = new URLSearchParams(location.search);
     state.view = p.get("view") === "watch" ? "watch" : "all";
+    p.delete("lot"); p.delete("alerts");
     els.q.value = p.get("q") || "";
     els.sort.value = p.get("sort") || "ending";
     return p;
@@ -252,7 +262,7 @@
 
   // ---------- lots ----------
   function lotRow(it) {
-    const c = closesIn(it.auction_end);
+    const c = saleTiming(it);
     const bid = it.current_bid != null ? `Bid ${rand(it.current_bid)}` : `Starts at ${rand(it.starting_bid)}`;
     const facts = [km(it.mileage_km), it.damage_code_raw || CODE_LABEL[it.damage_code]];
     if (it.runs_and_drives === "no") facts.push(`<span class="warn">Non-runner</span>`);
@@ -364,8 +374,10 @@
       ["Damage", [it.primary_damage, it.secondary_damage].filter(Boolean).join("; ") || "None listed"],
       ["Runs and drives", TRI[it.runs_and_drives]], ["Keys", TRI[it.keys_available]],
       ["Odometer", it.odometer_status || "Not stated"], ["Location", [it.branch, it.province].filter(Boolean).join(", ")],
-      ["Sale", it.auction_type === "live" ? "Live webcast" : it.auction_type === "timed" ? "Timed online" : "Not stated"],
-      ["Closes", closesAt(it.auction_end)],
+      ["Sale", it.auction_type === "live"
+        ? `Live webcast${it.auction_start ? `, starts ${closesAt(it.auction_start)}` : ""}${it.lot_number ? `, lot ${it.lot_number} in the running order` : ""}`
+        : it.auction_type === "timed" ? "Timed online" : "Not stated"],
+      [it.auction_type === "live" ? "Sale ends about" : "Closes", closesAt(it.auction_end)],
     ];
     const action = it.demo
       ? `<span class="btn" aria-disabled="true">Bid on ${esc(it.source_name)}</span><p>Demo listing: there's no real auction to open.</p>`
@@ -383,6 +395,7 @@
       <div class="section"><h3>Vehicle</h3><dl class="specs">${specs.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v || "–")}</dd>`).join("")}</dl></div>
       ${it.description ? `<div class="section"><h3>Auction house description</h3><p class="desc">${esc(it.description)}</p></div>` : ""}
       ${checkPanel(it)}
+      ${reminderSection(it)}
       <div class="d-action">${action}</div>`;
   }
 
@@ -460,6 +473,13 @@
         : `<p class="max-bid">At these repair costs, no bid leaves ${rand(target)} profit.</p>`;
     }
     const basis = bidNow != null ? `<p class="muted">Profit is worked out at the ${bidLabel} of ${rand(bidNow)}. Every extra rand you bid comes off it, plus commission.</p>` : "";
+    const limit = notes.get("limit", it);
+    let limitHtml = "";
+    if (limit) {
+      limitHtml = `<p class="limit-set">You'll get an alert if bidding passes ${rand(limit.bid)}. <button type="button" class="linkish" id="limit-remove">Remove</button></p>`;
+    } else if (bid > 0) {
+      limitHtml = `<button type="button" class="btn btn-quiet limit-btn" id="limit-set" data-bid="${bid}">Tell me if bidding passes ${rand(bid)}</button>`;
+    }
     box.innerHTML = `<div class="verdict-band ${V_CLASS[d.verdict] || ""}">
         <p class="vb-head">${esc(d.verdict || "Not enough information")}</p><p class="vb-why">${why}</p></div>
       <table class="costs deal-totals"><tbody>
@@ -468,7 +488,9 @@
         <tr><td>Repairs${d.inspect ? " (priced lines only)" : ""}</td><td>− ${d.repLow === d.repHigh ? rand(d.repLow) : `${rand(d.repLow)} – ${rand(d.repHigh)}`}</td></tr>
         <tr><td>Getting it on the road</td><td>− ${d.roadLow === d.roadHigh ? rand(d.roadLow) : `${rand(d.roadLow)} – ${rand(d.roadHigh)}`}</td></tr>
         <tr class="total"><td>Profit</td><td>${profit}</td></tr>
-      </tbody></table>${maxBid}${basis}`;
+      </tbody></table>${maxBid}${limitHtml}${basis}`;
+    $("#limit-set")?.addEventListener("click", (e) => setLimit(it, Number(e.currentTarget.dataset.bid)));
+    $("#limit-remove")?.addEventListener("click", () => { notes.del("limit", it); renderDealSummary(it); toast("Bid limit removed."); });
   }
 
   function refreshRowProfit(it) {
@@ -635,6 +657,7 @@
       it = await res.json();
     } catch { toast("Couldn't open that lot. It may have closed."); return; }
     openPanel(drawerHtml(it), { trigger });
+    wireReminders(it);
     $(".d-star").addEventListener("click", (e) => {
       toggleWatch(e.currentTarget);
       const row = els.lots.querySelector(`.star[data-watch="${CSS.escape(lotKey(it))}"]`);
@@ -650,6 +673,105 @@
     els.scrim.hidden = true;
     document.body.style.overflow = "";
     state.lastFocus?.focus?.();
+  }
+
+  // ---------- reminders, bid limits, calendar ----------
+  const offsetsFor = (it) => state.lotReminders[lotKey(it)] ?? state.user?.reminder_offsets ?? [120];
+  const whenText = (offs) => offs.length ? REMINDER_CHOICES.filter(([m]) => offs.includes(m)).map(([, l]) => l).join(", ") + " before" : "No reminders";
+
+  function reminderSection(it) {
+    const live = it.auction_type === "live" && it.auction_start;
+    const moment = live ? "the live sale starts" : "bidding closes";
+    const cal = (it.auction_start || it.auction_end)
+      ? `<a class="btn btn-quiet cal-btn" href="/api/listings/${encodeURIComponent(it.source)}/${encodeURIComponent(it.source_lot_id)}/calendar.ics" download>Add to calendar</a>` : "";
+    if (!state.user) {
+      return `<div class="section reminders"><h3>Reminders</h3>
+        <p class="muted">Get a reminder on your phone before ${moment}.</p>
+        <div class="rem-actions"><button type="button" class="btn btn-quiet" id="rem-signin">Sign in for reminders</button>${cal}</div></div>`;
+    }
+    const offs = offsetsFor(it), custom = lotKey(it) in state.lotReminders, watched = notes.isWatched(it);
+    return `<div class="section reminders"><h3>Reminders</h3>
+      <p class="muted">${watched ? `Remind me before ${moment}:` : `Watch this lot to be reminded before ${moment}. Ticking a time watches it.`}</p>
+      <div class="rem-opts">${REMINDER_CHOICES.map(([m, l]) => `<label class="check"><input type="checkbox" data-rem="${m}"${watched && offs.includes(m) ? " checked" : ""}> ${l} before</label>`).join("")}</div>
+      <p class="muted rem-note">${custom ? `Custom times for this lot. <button type="button" class="linkish" id="rem-default">Use my usual times</button>.` : `Your usual times are set in your account.`}
+        ${state.pushDevices ? "" : `To get them on your phone, turn on phone notifications in your account.`}</p>
+      <div class="rem-actions">${cal}</div></div>`;
+  }
+
+  function wireReminders(it) {
+    $("#rem-signin")?.addEventListener("click", () => openAuth("Sign in to get reminders before auctions close."));
+    const boxes = [...els.drawerBody.querySelectorAll("input[data-rem]")];
+    const save = async (offsets) => {
+      try {
+        await api(`/api/me/watchlist/${lotKey(it)}`, { method: "PUT", body: { reminders: offsets } });
+        if (offsets === null) delete state.lotReminders[lotKey(it)]; else state.lotReminders[lotKey(it)] = offsets;
+        if (!notes.isWatched(it)) { notes.watch.add(lotKey(it)); refreshStars(it); renderNav(); }
+        const sec = els.drawerBody.querySelector(".reminders");
+        sec.outerHTML = reminderSection(it);
+        wireReminders(it);
+        toast(offsets === null ? "Using your usual reminder times." : `Reminders: ${whenText(offsets).toLowerCase()}.`);
+      } catch (e) { toast(e.message); }
+    };
+    boxes.forEach((b) => b.addEventListener("change", () => save(boxes.filter((x) => x.checked).map((x) => Number(x.dataset.rem)))));
+    $("#rem-default")?.addEventListener("click", () => save(null));
+  }
+
+  function refreshStars(it) {
+    document.querySelectorAll(`.star[data-watch="${CSS.escape(lotKey(it))}"]`).forEach((s) => s.setAttribute("aria-pressed", String(notes.isWatched(it))));
+  }
+
+  function setLimit(it, bid) {
+    if (!state.user) return openAuth("Sign in to get an alert when bidding passes your limit.");
+    notes.set("limit", it, { bid, setAt: new Date().toISOString() });
+    if (!notes.isWatched(it)) { notes.toggleWatch(it); refreshStars(it); renderNav(); }
+    renderDealSummary(it);
+    toast(`We'll alert you if bidding passes ${rand(bid)}.`);
+  }
+
+  // ---------- phone notifications ----------
+  const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+  function keyBytes(b64) {
+    const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  }
+
+  async function currentSubscription() {
+    if (!pushSupported()) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+
+  async function enablePush() {
+    if (!pushSupported()) {
+      throw new Error(isIOS() && !standalone()
+        ? "On iPhone, first add Okshun to your Home Screen (Share, then Add to Home Screen), open it from there, and turn this on again."
+        : "This browser can't show notifications. Try Chrome, Edge or Firefox.");
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("Notifications are blocked for this site. Allow them in your browser's site settings, then try again.");
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await api("/api/push/key");
+    let sub;
+    try {
+      sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+    } catch (e) {
+      throw new Error(e && e.name === "NotAllowedError"
+        ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
+        : "This device couldn't sign up for notifications right now. Check your connection and try again.");
+    }
+    await api("/api/me/push", { method: "POST", body: sub.toJSON() });
+    state.pushDevices = Math.max(1, state.pushDevices);
+  }
+
+  async function disablePush() {
+    const sub = await currentSubscription();
+    if (sub) {
+      await api("/api/me/push", { method: "DELETE", body: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+    }
   }
 
   // ---------- small helpers ----------
@@ -856,8 +978,14 @@
       <h2 id="d-title">Your account</h2>
       <div class="section"><h3>Saved searches</h3>${list}</div>
       <div class="section"><h3>Reminders</h3>
-        <label class="check"><input type="checkbox" id="acc-reminders"${state.user.email_reminders ? " checked" : ""}> Email me when a watched lot closes within 2 hours</label>
-        <p class="muted">Alerts always show under Alerts in the app. Emails go out when the server has email set up.</p></div>
+        <p class="muted">Before a watched lot closes, or before its live sale starts, remind me:</p>
+        <div class="rem-opts">${REMINDER_CHOICES.map(([m, l]) => `<label class="check"><input type="checkbox" data-acc-rem="${m}"${state.user.reminder_offsets.includes(m) ? " checked" : ""}> ${l} before</label>`).join("")}</div>
+        <h4 class="acc-sub">Where to send them</h4>
+        <label class="check"><input type="checkbox" id="acc-push"> Phone notifications on this device</label>
+        <p class="muted" id="acc-push-status"></p>
+        <button type="button" class="linkish" id="acc-push-test" hidden>Send a test notification</button>
+        <label class="check"><input type="checkbox" id="acc-reminders"${state.user.email_reminders ? " checked" : ""}> Email</label>
+        <p class="muted">Reminders always show under Alerts in the app. Emails go out once the server has email set up.</p></div>
       <div class="section acc-actions">
         <button type="button" class="btn btn-quiet" id="acc-signout">Sign out</button>
         <button type="button" class="linkish danger" id="acc-delete">Delete my account</button>
@@ -868,6 +996,34 @@
     body.querySelectorAll("[data-search-delete]").forEach((b) => b.addEventListener("click", async () => {
       try { await api(`/api/me/searches/${b.dataset.searchDelete}`, { method: "DELETE" }); toast("Saved search deleted."); openAccount(); } catch (e) { toast(e.message); }
     }));
+    body.querySelectorAll("[data-acc-rem]").forEach((c) => c.addEventListener("change", async () => {
+      const offs = [...body.querySelectorAll("[data-acc-rem]:checked")].map((x) => Number(x.dataset.accRem));
+      try { await api("/api/me", { method: "PATCH", body: { reminder_offsets: offs } }); state.user.reminder_offsets = offs; toast(`Reminders: ${whenText(offs).toLowerCase()}.`); }
+      catch (er) { toast(er.message); }
+    }));
+    const pushBox = $("#acc-push"), pushStatus = $("#acc-push-status"), pushTest = $("#acc-push-test");
+    const showPush = async () => {
+      const sub = await currentSubscription().catch(() => null);
+      pushBox.checked = Boolean(sub) && state.user.push_reminders !== false;
+      pushTest.hidden = !pushBox.checked;
+      pushStatus.textContent = !pushSupported()
+        ? (isIOS() && !standalone() ? "On iPhone, add Okshun to your Home Screen first, then turn this on from there." : "This browser can't show notifications.")
+        : pushBox.checked ? "On. Reminders pop up on this device even when Okshun is closed." : "Off on this device.";
+    };
+    showPush();
+    pushBox.addEventListener("change", async () => {
+      pushBox.disabled = true;
+      try {
+        if (pushBox.checked) { await enablePush(); state.user.push_reminders = true; toast("Phone notifications are on for this device."); }
+        else { await disablePush(); toast("Phone notifications are off for this device."); }
+      } catch (er) { pushBox.checked = false; toast(er.message); }
+      pushBox.disabled = false;
+      showPush();
+    });
+    pushTest.addEventListener("click", async () => {
+      try { await api("/api/me/push/test", { method: "POST" }); toast("Test sent. It should pop up in a few seconds."); }
+      catch (er) { toast(er.message); }
+    });
     $("#acc-reminders").addEventListener("change", async (e) => {
       try { await api("/api/me", { method: "PATCH", body: { email_reminders: e.target.checked } }); state.user.email_reminders = e.target.checked; } catch (er) { toast(er.message); }
     });
@@ -926,7 +1082,7 @@
     const a = await refreshAlerts();
     if (!a) return;
     const item = (x) => {
-      const what = x.kind === "closing" ? "Closes within 2 hours" : `New match for “${esc(x.search_name || "a saved search")}”`;
+      const what = esc(x.headline || "Alert");
       const closed = x.status === "closed" || (x.auction_end && new Date(x.auction_end) < new Date());
       return `<li class="${x.read_at ? "" : "unread"}"><button type="button" class="alert-btn" data-open="${esc(x.source)}/${esc(x.source_lot_id)}"${closed ? " disabled" : ""}>
         <span class="alert-kind">${what}</span><span class="alert-title">${esc(x.title)}</span>
@@ -1000,6 +1156,7 @@
 
   // ---------- start ----------
   (async () => {
+    const deep = new URLSearchParams(location.search);   // read before load() rewrites the address
     const p = readParams();
     try {
       state.user = (await api("/api/me")).user;
@@ -1024,6 +1181,11 @@
     load();
     refreshWatchBanner();
     refreshAlerts();
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (deep.get("lot")) {
+      const [s, ...l] = deep.get("lot").split("/");
+      openLot(s, l.join("/"));
+    } else if (deep.get("alerts") && state.user) openAlerts();
     setInterval(() => { refreshAlerts(); refreshWatchBanner(); }, 5 * 60 * 1000);
   })();
 })();

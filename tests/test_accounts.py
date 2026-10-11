@@ -51,7 +51,8 @@ def test_changes_need_the_okshun_header(client):
 
 def test_session_cookie_and_logout(client):
     r = signup(client)
-    assert r.json()["user"] == {"email": "buyer@example.com", "email_reminders": True}
+    assert r.json()["user"] == {"email": "buyer@example.com", "email_reminders": True,
+                                "push_reminders": True, "reminder_offsets": [120]}
     cookie = client.cookies.get("okshun_session")
     assert cookie and "httponly" in r.headers["set-cookie"].lower()
     assert client.get("/api/me").json()["user"]["email"] == "buyer@example.com"

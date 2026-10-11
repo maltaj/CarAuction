@@ -95,7 +95,8 @@ class Listing:
     # sale
     auction_type: AuctionType = AuctionType.UNKNOWN
     status: ListingStatus = ListingStatus.UNKNOWN
-    auction_start: Optional[datetime] = None
+    auction_start: Optional[datetime] = None   # live webcast sales: when the sale begins
+    lot_number: Optional[int] = None           # live sales: position in the running order
     auction_end: Optional[datetime] = None
     branch: Optional[str] = None
     province: Optional[str] = None          # normalised: "Gauteng", "Western Cape", ...

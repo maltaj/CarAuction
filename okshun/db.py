@@ -16,7 +16,7 @@ from urllib.parse import parse_qs
 
 from okshun import repairs
 from okshun.scoring import load_rules, score
-from okshun.users import USER_DDL
+from okshun.users import USER_DDL, migrate as migrate_users
 
 DEFAULT_DB = Path(os.environ.get("OKSHUN_DB", Path(__file__).resolve().parent.parent / "okshun.db"))
 
@@ -35,6 +35,7 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(USER_DDL)
+    migrate_users(conn)
     try:
         conn.executescript(DDL)
     except sqlite3.OperationalError:

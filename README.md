@@ -11,6 +11,7 @@ It collects auction listings, normalises them into one shared format, estimates 
 - **Optional history check**: in a lot's details, buyers pick a vehicle history service they already use (TransUnion Auto, FirstCheck, Lightstone Auto, AA Autofacts or SAIA VIN-Lookup). Okshun copies the VIN and opens that service, then the buyer records the report's mileage and any flags. A report mileage above the lot's mileage is flagged as a possible rolled-back odometer. Okshun never logs into these services; results are kept in the buyer's browser, or in their account once signed in. The provider list is in `okshun/vehicle_checks.yaml`.
 - **Watchlist and compare**: star any lot to watch it, and see a banner when a watched lot closes within 2 hours. Tick up to four lots to compare all-in cost, profit after repairs, verdict, safe maximum bid, risk, mileage, damage and history check side by side, with the best of each marked.
 - **Accounts, saved searches and alerts**: buyers sign up with email and password. Their watchlist, history checks and repair figures move from the browser into the account and follow them to any device. "Save this search" turns current filters into an alert: new lots that match show under Alerts, as do watched lots closing within 2 hours. With SMTP configured, buyers also get one email digest per run (can be turned off per search and for reminders). Passwords are salted PBKDF2 hashes, sessions are random tokens stored only as hashes in an HttpOnly cookie, and buyers can delete their account and all its data.
+- **Reminders and notifications**: buyers choose when to be reminded (1 day, 2 hours, 30 or 15 minutes before) for all watched lots, or per lot. Timed auctions remind before closing; live webcast sales remind before the sale starts and show the lot's place in the running order. Only the most relevant reminder fires, with the real time left. "Tell me if bidding passes R X" sets a bid limit and alerts when bidding goes over it. Reminders reach the buyer as phone/browser notifications (Web Push, no app store needed), email and in-app Alerts; tapping a notification opens the lot. Every lot also has "Add to calendar" (an .ics event with a 30-minute alarm). The server checks every 2 minutes.
 - **Data**: runs on demo data from five fictional houses (every name contains "Demo" and the app labels it). No real auction house is connected yet; each is added only with its written permission (see Data access).
 - **GoBid scraper** (`gobid_scraper.py`): personal-use tool for your own GoBid login. Setup and selector calibration: [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Not part of the public app.
 
@@ -41,6 +42,18 @@ Set these environment variables before running ingest or alerts:
 
 Without them, alerts appear only in the app. When the site runs on HTTPS, also set `OKSHUN_SECURE_COOKIES=1`.
 
+### Phone notifications
+
+Buyers turn them on in their account. They work in Chrome, Edge and Firefox on Android and desktop, and on iPhone (iOS 16.4 or later) once Okshun is added to the Home Screen. Browsers only allow them on HTTPS sites (and on `localhost` for testing).
+
+| Variable | What it does |
+| --- | --- |
+| `OKSHUN_VAPID_PRIVATE`, `OKSHUN_VAPID_PUBLIC` | Fixed push keys (base64url). If unset, a pair is generated on first use and kept in the database. Keep the same keys in production: changing them stops existing subscriptions. Make a pair with `python -c "from okshun.push import generate_keys; print(generate_keys())"` |
+| `OKSHUN_PUSH_SUBJECT` | Contact for push services, e.g. `mailto:alerts@okshun.co.za` |
+| `OKSHUN_REMINDER_INTERVAL` | Seconds between reminder checks in the web server (default 120; `0` turns the checker off) |
+
+Without the web server running, check with `python -m okshun.alerts` (once) or `python -m okshun.alerts --every 120`.
+
 Run the tests with `pytest`.
 
 ## How it fits together
@@ -70,10 +83,12 @@ Adapters only fetch and map data. Fee estimates, scoring, storage and the API ar
 | `okshun/repairs.py`, `okshun/repair_rules.yaml` | Repair, road-cost and profit estimates with verdicts; tune damage items, car classes, Code 3 discount and thresholds in the YAML |
 | `okshun/vehicle_checks.yaml` | History/odometer services buyers can open from a lot, with what each one checks |
 | `okshun/users.py`, `okshun/account_api.py`, `okshun/deps.py` | Accounts, sessions, watchlist, per-lot notes, saved searches and their API |
-| `okshun/alerts.py` | New-match and closing-soon alerts, in-app list and optional email digests |
+| `okshun/alerts.py` | New matches, reminders (closing and live-sale start), bid-limit alerts; delivery by phone notification and email |
+| `okshun/push.py` | Web Push: VAPID signing and RFC 8291 encryption, using only `cryptography` |
+| `okshun/calendar.py` | Calendar (.ics) events for lots |
 | `okshun/db.py`, `okshun/ingest.py` | Ingest pipeline, search queries, automatic database upgrades |
 | `okshun/api.py` | JSON API (`/api/listings`, `/api/listings/{source}/{lot}`, `/api/facets`, `/api/sources`, `/api/vehicle-checks`, `/api/repair-rules`, plus `/api/auth/*` and `/api/me/*` for accounts) and the static front end |
-| `okshun/web/` | Front end: plain HTML, CSS and JavaScript, no build step |
+| `okshun/web/` | Front end: plain HTML, CSS and JavaScript, no build step; `sw.js` shows notifications, `manifest.webmanifest` lets phones install it |
 | `gobid_scraper.py` | Personal GoBid scraper with its own scoring and email alerts |
 
 ## Data access

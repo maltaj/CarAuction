@@ -261,6 +261,15 @@ dialog.auth::backdrop { background: rgb(34 48 58 / 0.45); }
 .auth-error { margin: 0; color: var(--risk-high); font-weight: 600; font-size: 15px; }
 .auth-switch, .auth-form .small { margin: 0; }
 
+/* Reminders, bid limits, calendar */
+.reminders .rem-opts, .rem-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; margin-bottom: 6px; }
+.rem-note { margin-top: 4px; }
+.rem-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+.cal-btn, .limit-btn { min-height: 40px; }
+.limit-btn { margin: 0 0 8px; }
+.limit-set { margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--teal-wash); font-size: 15px; }
+.acc-sub { font: 600 15px/1.2 var(--cond); margin: 14px 0 4px; }
+
 /* Worth fixing? */
 .profit { font-size: 14px; font-weight: 600; margin-top: 2px; }
 .v-worth { --v: var(--risk-low); }

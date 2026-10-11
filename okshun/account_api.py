@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from okshun import alerts, db, users
+from okshun import alerts, db, push, users
 from okshun.adapters import SOURCES
 from okshun.deps import SESSION_COOKIE, current_user, get_conn, require_user, same_site_request
 
@@ -25,6 +25,21 @@ class Credentials(BaseModel):
 
 class AccountUpdate(BaseModel):
     email_reminders: Optional[bool] = None
+    push_reminders: Optional[bool] = None
+    reminder_offsets: Optional[list[int]] = Field(default=None, max_length=4)
+
+
+class WatchBody(BaseModel):
+    reminders: Optional[list[int]] = Field(default=None, max_length=4)   # None = my usual times
+
+
+class PushSubscription(BaseModel):
+    endpoint: str = Field(max_length=1000)
+    keys: dict
+
+
+class PushRemove(BaseModel):
+    endpoint: str = Field(max_length=1000)
 
 
 class NoteBody(BaseModel):
@@ -53,7 +68,9 @@ def _set_cookie(response: Response, token: str) -> None:
 
 
 def _public(user: Optional[dict]) -> Optional[dict]:
-    return {"email": user["email"], "email_reminders": user["email_reminders"]} if user else None
+    if not user:
+        return None
+    return {k: user[k] for k in ("email", "email_reminders", "push_reminders", "reminder_offsets")}
 
 
 def _fail(e: users.AuthError, status: int = 400):
@@ -100,8 +117,8 @@ def me(user: Optional[dict] = Depends(current_user)) -> dict:
 
 @router.patch("/me", dependencies=changes)
 def update_me(body: AccountUpdate, user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    if body.email_reminders is not None:
-        users.set_email_reminders(conn, user["id"], body.email_reminders)
+    users.set_reminder_prefs(conn, user["id"], offsets=body.reminder_offsets, email=body.email_reminders,
+                             push=body.push_reminders)
     return {"ok": True}
 
 
@@ -123,8 +140,11 @@ def import_data(body: BrowserData, user: dict = Depends(require_user), conn: sql
 
 
 @router.put("/me/watchlist/{source}/{lot}", dependencies=changes)
-def watch(source: str, lot: str, user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def watch(source: str, lot: str, body: Optional[WatchBody] = None, user: dict = Depends(require_user),
+          conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     users.watch(conn, user["id"], source, lot, True)
+    if body is not None and "reminders" in body.model_fields_set:
+        users.set_watch_reminders(conn, user["id"], source, lot, body.reminders)
     return {"ok": True}
 
 
@@ -206,3 +226,37 @@ def my_alerts(user: dict = Depends(require_user), conn: sqlite3.Connection = Dep
 def read_alerts(user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     alerts.mark_read(conn, user["id"])
     return {"ok": True}
+
+
+# ---------- phone notifications ----------
+
+@router.get("/push/key")
+def push_key(conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """The public VAPID key the browser needs to subscribe."""
+    return {"key": push.vapid_keys(conn)[1]}
+
+
+@router.post("/me/push", dependencies=changes)
+def add_push(body: PushSubscription, user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    try:
+        users.add_push_subscription(conn, user["id"], body.endpoint, str(body.keys.get("p256dh", "")), str(body.keys.get("auth", "")))
+    except users.AuthError as e:
+        _fail(e)
+    users.set_reminder_prefs(conn, user["id"], push=True)
+    return {"ok": True}
+
+
+@router.delete("/me/push", dependencies=changes)
+def remove_push(body: PushRemove, user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    users.remove_push_subscription(conn, user["id"], body.endpoint)
+    return {"ok": True}
+
+
+@router.post("/me/push/test", dependencies=changes)
+def test_push(user: dict = Depends(require_user), conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    sent = push.push_to_user(conn, user["id"], {
+        "title": "Okshun notifications are on", "body": "You'll get reminders here before your watched lots close.",
+        "url": "/", "tag": "test"})
+    if not sent:
+        raise HTTPException(status_code=502, detail="No device accepted the notification. Turn notifications off and on again.")
+    return {"sent": sent}

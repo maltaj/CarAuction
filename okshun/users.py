@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS users (
     email            TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash    TEXT NOT NULL,
     created_at       TEXT NOT NULL,
-    email_reminders  INTEGER NOT NULL DEFAULT 1   -- email when a watched lot is about to close
+    email_reminders  INTEGER NOT NULL DEFAULT 1,  -- email when a watched lot is about to close
+    push_reminders   INTEGER NOT NULL DEFAULT 1,  -- phone notifications, once the buyer allows them
+    reminder_offsets TEXT NOT NULL DEFAULT '[120]' -- minutes before closing / sale start, JSON list
 );
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash  TEXT PRIMARY KEY,
@@ -38,9 +40,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
     source         TEXT NOT NULL,
     source_lot_id  TEXT NOT NULL,
     added_at       TEXT NOT NULL,
+    reminders      TEXT,                          -- per-lot override of reminder_offsets, JSON list
     PRIMARY KEY (user_id, source, source_lot_id)
 );
--- A buyer's own data about a lot: kind = 'check' (history check) or 'repairs' (repair edits)
+-- A buyer's own data about a lot: kind = 'check' (history check), 'repairs' (repair edits) or 'limit' (bid limit)
 CREATE TABLE IF NOT EXISTS lot_notes (
     user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     source         TEXT NOT NULL,
@@ -62,18 +65,52 @@ CREATE TABLE IF NOT EXISTS saved_searches (
 CREATE TABLE IF NOT EXISTS alerts (
     id               INTEGER PRIMARY KEY,
     user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kind             TEXT NOT NULL,              -- 'new_match' or 'closing'
+    kind             TEXT NOT NULL,              -- 'new_match', 'closing_<min>', 'starting_<min>', 'over_limit'
     saved_search_id  INTEGER REFERENCES saved_searches(id) ON DELETE CASCADE,
     source           TEXT NOT NULL,
     source_lot_id    TEXT NOT NULL,
     created_at       TEXT NOT NULL,
     read_at          TEXT,
     emailed_at       TEXT,
+    pushed_at        TEXT,
     UNIQUE (user_id, kind, source, source_lot_id)
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id          INTEGER PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint    TEXT NOT NULL UNIQUE,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
 );
 """
 
-NOTE_KINDS = ("check", "repairs")
+# Columns added after the first release; migrate() adds them to older databases.
+LATER_COLUMNS = {
+    "users": [("push_reminders", "INTEGER NOT NULL DEFAULT 1"), ("reminder_offsets", "TEXT NOT NULL DEFAULT '[120]'")],
+    "watchlist": [("reminders", "TEXT")],
+    "alerts": [("pushed_at", "TEXT")],
+}
+REMINDER_CHOICES = (1440, 120, 30, 15)   # 1 day, 2 hours, 30 minutes, 15 minutes
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    for table, cols in LATER_COLUMNS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in cols:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    conn.commit()
+
+
+def clean_offsets(offsets) -> list[int]:
+    return sorted({int(o) for o in (offsets or []) if int(o) in REMINDER_CHOICES}, reverse=True)
+
+NOTE_KINDS = ("check", "repairs", "limit")
 SESSION_DAYS = 30
 PBKDF2_ITERATIONS = 390_000
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -134,7 +171,7 @@ def authenticate(conn: sqlite3.Connection, email: str, password: str) -> int:
 def create_session(conn: sqlite3.Connection, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now()
-    conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)", (
+    conn.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)", (
         _token_hash(token), user_id, now.isoformat(timespec="seconds"),
         (now + timedelta(days=SESSION_DAYS)).isoformat(timespec="seconds")))
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now.isoformat(timespec="seconds"),))
@@ -146,11 +183,13 @@ def user_for_token(conn: sqlite3.Connection, token: Optional[str]) -> Optional[d
     if not token:
         return None
     row = conn.execute(
-        "SELECT u.id, u.email, u.email_reminders FROM sessions s JOIN users u ON u.id = s.user_id "
-        "WHERE s.token_hash = ? AND s.expires_at > ?", (_token_hash(token), _now())).fetchone()
+        "SELECT u.id, u.email, u.email_reminders, u.push_reminders, u.reminder_offsets FROM sessions s "
+        "JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+        (_token_hash(token), _now())).fetchone()
     if not row:
         return None
-    return {"id": row["id"], "email": row["email"], "email_reminders": bool(row["email_reminders"])}
+    return {"id": row["id"], "email": row["email"], "email_reminders": bool(row["email_reminders"]),
+            "push_reminders": bool(row["push_reminders"]), "reminder_offsets": json.loads(row["reminder_offsets"])}
 
 
 def end_session(conn: sqlite3.Connection, token: Optional[str]) -> None:
@@ -169,19 +208,58 @@ def set_email_reminders(conn: sqlite3.Connection, user_id: int, on: bool) -> Non
     conn.commit()
 
 
+def set_reminder_prefs(conn: sqlite3.Connection, user_id: int, *, offsets=None, email: Optional[bool] = None,
+                       push: Optional[bool] = None) -> None:
+    if offsets is not None:
+        conn.execute("UPDATE users SET reminder_offsets = ? WHERE id = ?", (json.dumps(clean_offsets(offsets)), user_id))
+    if email is not None:
+        conn.execute("UPDATE users SET email_reminders = ? WHERE id = ?", (int(email), user_id))
+    if push is not None:
+        conn.execute("UPDATE users SET push_reminders = ? WHERE id = ?", (int(push), user_id))
+    conn.commit()
+
+
+def set_watch_reminders(conn: sqlite3.Connection, user_id: int, source: str, lot: str, offsets) -> None:
+    """Per-lot reminder times; None goes back to the buyer's usual times. Watches the lot if needed."""
+    watch(conn, user_id, source, lot, True)
+    conn.execute("UPDATE watchlist SET reminders = ? WHERE user_id = ? AND source = ? AND source_lot_id = ?",
+                 (None if offsets is None else json.dumps(clean_offsets(offsets)), user_id, source, lot))
+    conn.commit()
+
+
+# ---------- phone notifications ----------
+
+def add_push_subscription(conn: sqlite3.Connection, user_id: int, endpoint: str, p256dh: str, auth: str) -> None:
+    if not endpoint.startswith("https://"):
+        raise AuthError("That notification subscription isn't valid.")
+    conn.execute(
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth",
+        (user_id, endpoint[:1000], p256dh[:200], auth[:100], _now()))
+    conn.commit()
+
+
+def remove_push_subscription(conn: sqlite3.Connection, user_id: int, endpoint: str) -> None:
+    conn.execute("DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?", (user_id, endpoint))
+    conn.commit()
+
+
 # ---------- watchlist and notes ----------
 
 def user_data(conn: sqlite3.Connection, user_id: int) -> dict:
-    watch = [f"{r['source']}/{r['source_lot_id']}" for r in conn.execute(
-        "SELECT source, source_lot_id FROM watchlist WHERE user_id = ? ORDER BY added_at", (user_id,))]
+    rows = conn.execute("SELECT source, source_lot_id, reminders FROM watchlist WHERE user_id = ? ORDER BY added_at",
+                        (user_id,)).fetchall()
+    watch = [f"{r['source']}/{r['source_lot_id']}" for r in rows]
+    reminders = {f"{r['source']}/{r['source_lot_id']}": json.loads(r["reminders"]) for r in rows if r["reminders"] is not None}
     notes = {f"{r['kind']}|{r['source']}/{r['source_lot_id']}": json.loads(r["data"]) for r in conn.execute(
         "SELECT kind, source, source_lot_id, data FROM lot_notes WHERE user_id = ?", (user_id,))}
-    return {"watchlist": watch, "notes": notes}
+    devices = conn.execute("SELECT COUNT(*) FROM push_subscriptions WHERE user_id = ?", (user_id,)).fetchone()[0]
+    return {"watchlist": watch, "reminders": reminders, "notes": notes, "push_devices": devices}
 
 
 def watch(conn: sqlite3.Connection, user_id: int, source: str, lot: str, on: bool = True) -> None:
     if on:
-        conn.execute("INSERT OR IGNORE INTO watchlist VALUES (?, ?, ?, ?)", (user_id, source, lot, _now()))
+        conn.execute("INSERT OR IGNORE INTO watchlist (user_id, source, source_lot_id, added_at) VALUES (?, ?, ?, ?)", (user_id, source, lot, _now()))
     else:
         conn.execute("DELETE FROM watchlist WHERE user_id = ? AND source = ? AND source_lot_id = ?", (user_id, source, lot))
     conn.commit()
@@ -190,12 +268,16 @@ def watch(conn: sqlite3.Connection, user_id: int, source: str, lot: str, on: boo
 def set_note(conn: sqlite3.Connection, user_id: int, kind: str, source: str, lot: str, data: Optional[dict]) -> None:
     if kind not in NOTE_KINDS:
         raise AuthError(f"Unknown note kind: {kind}")
+    if kind == "limit":
+        # A new or removed bid limit should be able to alert again.
+        conn.execute("DELETE FROM alerts WHERE user_id = ? AND kind = 'over_limit' AND source = ? AND source_lot_id = ?",
+                     (user_id, source, lot))
     if data is None:
         conn.execute("DELETE FROM lot_notes WHERE user_id = ? AND source = ? AND source_lot_id = ? AND kind = ?",
                      (user_id, source, lot, kind))
     else:
         conn.execute(
-            "INSERT INTO lot_notes VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (user_id, source, source_lot_id, kind) "
+            "INSERT INTO lot_notes (user_id, source, source_lot_id, kind, data, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (user_id, source, source_lot_id, kind) "
             "DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
             (user_id, source, lot, kind, json.dumps(data)[:20_000], _now()))
     conn.commit()
@@ -207,13 +289,13 @@ def import_browser_data(conn: sqlite3.Connection, user_id: int, watchlist: list,
     for key in watchlist[:500]:
         source, _, lot = str(key).partition("/")
         if source and lot:
-            cur = conn.execute("INSERT OR IGNORE INTO watchlist VALUES (?, ?, ?, ?)", (user_id, source, lot, _now()))
+            cur = conn.execute("INSERT OR IGNORE INTO watchlist (user_id, source, source_lot_id, added_at) VALUES (?, ?, ?, ?)", (user_id, source, lot, _now()))
             added["watchlist"] += cur.rowcount
     for key, data in list(notes.items())[:2000]:
         kind, _, rest = str(key).partition("|")
         source, _, lot = rest.partition("/")
         if kind in NOTE_KINDS and source and lot and isinstance(data, dict):
-            cur = conn.execute("INSERT OR IGNORE INTO lot_notes VALUES (?, ?, ?, ?, ?, ?)",
+            cur = conn.execute("INSERT OR IGNORE INTO lot_notes (user_id, source, source_lot_id, kind, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                                (user_id, source, lot, kind, json.dumps(data)[:20_000], _now()))
             added["notes"] += cur.rowcount
     conn.commit()

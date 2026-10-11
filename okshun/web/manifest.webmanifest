@@ -1,0 +1,15 @@
+{
+  "name": "Okshun: every car auction in one search",
+  "short_name": "Okshun",
+  "description": "Search South African car auctions, screen lots for risk and repair costs, and get reminders before they close.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F5F6F3",
+  "theme_color": "#0B4553",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -38,7 +38,8 @@ def main() -> None:
     print(f"Saved to {args.db}")
     if not args.no_alerts:
         a = alerts.run(conn)
-        print(f"Alerts: {a['new_match']} new matches, {a['closing']} closing soon, {a['emails']} emails sent")
+        print(f"Alerts: {a['new_match']} new matches, {a['reminder']} reminders, {a['over_limit']} over limit, "
+              f"{a['pushes']} phone notifications, {a['emails']} emails")
 
 
 if __name__ == "__main__":

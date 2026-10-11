@@ -116,6 +116,13 @@ class DemoAdapter(SourceAdapter):
                 starting = _round(retail * start_factor)
                 current = _round(starting * rng.uniform(1.0, 1.4)) if rng.random() < 0.7 else None
                 ends = self.now + timedelta(hours=rng.randint(2, 240), minutes=rng.choice([0, 15, 30, 45]))
+                starts = None
+                if atype == AuctionType.LIVE:
+                    # Live webcast sales start at a set time and sell lots in order over a few hours.
+                    starts = ends.replace(hour=10, minute=0)
+                    if starts <= self.now + timedelta(hours=1):
+                        starts += timedelta(days=1)
+                    ends = starts + timedelta(hours=4)
                 colour = rng.choice(COLOURS)
                 desc = f"{year} {make} {model} {variant}. Colour: {colour}. Odometer {km:,} km.".replace(",", " ")
                 if primary:
@@ -127,7 +134,7 @@ class DemoAdapter(SourceAdapter):
                     source=hid, house=hname, lot=f"{prefix}-{10200 + i * 7 + offset}",
                     make=make, model=model, variant=variant, body=body, year=year, km=km,
                     code=damage_code, primary=primary, secondary=secondary, runs=runs, keys=keys,
-                    odo=odo, desc=desc, atype=atype, ends=ends, branch=branch,
+                    odo=odo, desc=desc, atype=atype, ends=ends, starts=starts, lot_no=i + 1 if starts else None, branch=branch,
                     province=rng.choice(provinces), starting=starting, current=current,
                     retail=_round(retail, 1000), comm=comm, fees=fees,
                     colour=colour,
@@ -145,7 +152,8 @@ class DemoAdapter(SourceAdapter):
             runs_and_drives=Tri(r["runs"]), keys_available=Tri(r["keys"]),
             odometer_status=r["odo"], description=r["desc"],
             auction_type=r["atype"], status=ListingStatus.OPEN,
-            auction_end=r["ends"], branch=r["branch"], province=r["province"],
+            auction_end=r["ends"], auction_start=r["starts"], lot_number=r["lot_no"],
+            branch=r["branch"], province=r["province"],
             starting_bid=r["starting"], current_bid=r["current"], estimated_retail=r["retail"],
             buyers_commission_pct=r["comm"], fixed_fees=r["fees"], vat_on_hammer=True,
         )
