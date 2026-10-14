@@ -76,7 +76,7 @@ Adapters only fetch and map data. Fee estimates, scoring, storage and the API ar
 | Path | What it does |
 | --- | --- |
 | `okshun/schema.py` | Shared `Listing` dataclass, adapter contract, parsing helpers, all-in cost, SQLite schema and upsert |
-| `okshun/scoring.py`, `okshun/scoring_rules.yaml` | Risk scoring used for every source; tune points and thresholds in the YAML |
+| `okshun/scoring.py`, `okshun/scoring_rules.yaml` | Risk scoring used for every source; only risks add points (0 = no risk signals; 0–3 Low, 4–8 Medium, 9+ High); tune points and thresholds in the YAML |
 | `okshun/adapters/demo.py` | Demo lots from fictional houses, with real SA model-year ranges |
 | `okshun/adapters/gobid.py` | Maps GoBid scraper output to `Listing` (personal use only) |
 | `okshun/adapters/__init__.py` | Which sources the app runs, and how each house is shown |

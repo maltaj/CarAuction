@@ -131,11 +131,13 @@
   }
   const closesAt = (iso) => iso ? new Date(iso).toLocaleString("en-ZA", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "Not published";
   const scoreText = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0");
+  // The risk score itself is a plain number (0 = no risk signals); only the reasons show +points.
+  const riskNum = (n) => (n < 0 ? `−${Math.abs(n)}` : String(n));
 
   function disc(item, big = false) {
     const cls = RISK_CLASS[item.risk_label] || "";
     return `<div class="disc ${cls}${big ? " big" : ""}" role="img" aria-label="${esc(item.risk_label || "Not scored")}, score ${esc(item.risk_score)}">
-      <span class="score">${item.risk_score == null ? "?" : scoreText(item.risk_score)}</span>
+      <span class="score">${item.risk_score == null ? "?" : riskNum(item.risk_score)}</span>
       <span class="word">${esc(RISK_WORD[item.risk_label] || "–")}</span></div>`;
   }
 
@@ -389,7 +391,7 @@
         <button type="button" class="d-close" id="d-close" aria-label="Close lot details">×</button></div>
       <h2 id="d-title">${esc(it.title)}</h2>
       <p class="d-variant">${esc(it.variant || "")}</p>
-      <div class="d-risk">${disc(it, true)}<div><h3>Why it scored ${scoreText(it.risk_score)}</h3>${reasonsList(it)}</div></div>
+      <div class="d-risk">${disc(it, true)}<div><h3>Why it scored ${riskNum(it.risk_score)}</h3>${reasonsList(it)}</div></div>
       <div class="section"><h3>What you'd pay</h3>${costTable(it)}</div>
       ${dealSection(it)}
       <div class="section"><h3>Vehicle</h3><dl class="specs">${specs.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v || "–")}</dd>`).join("")}</dl></div>
@@ -874,7 +876,7 @@
       ["Profit after repairs", (it, i) => profitText(deals[i]) + mark(lows[i], bProfit)],
       ["Verdict", (it, i) => `<span class="profit ${V_CLASS[deals[i].verdict] || ""}">${esc(deals[i].verdict || "–")}</span>`],
       ["Bid up to", (it, i) => { const b = maxBidFor(it, deals[i]); return b === undefined ? "–" : b > 0 ? rand(b) : "No safe bid"; }],
-      ["Risk", (it) => `${esc(it.risk_label || "–")} (${scoreText(it.risk_score)})` + mark(it.risk_score, bRisk)],
+      ["Risk", (it) => `${esc(it.risk_label || "–")} (${riskNum(it.risk_score)})` + mark(it.risk_score, bRisk)],
       ["Mileage", (it) => km(it.mileage_km)],
       ["Code", (it) => esc(it.damage_code_raw || CODE_LABEL[it.damage_code])],
       ["Damage", (it) => esc([it.primary_damage, it.secondary_damage].filter(Boolean).join("; ") || "None listed")],

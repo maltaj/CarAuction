@@ -1,20 +1,21 @@
 # Default risk-scoring rules for Okshun. Higher score = higher risk.
-# Same rule format as the `scoring:` section of config.example.yaml, so a
-# rule you tune for the GoBid scraper can be copied here unchanged.
+# Only risk signals add points; nothing subtracts. A clean car scores 0, so a
+# good sign (runs, has keys) can never hide a bad one (no keys, 285 000 km).
+# Same rule format as the `scoring:` section of config.example.yaml.
 # Quote "yes"/"no": unquoted, YAML reads them as true/false.
 
 run_and_drive:
-  "yes": -5
+  "yes": 0
   "no": 8
   unknown: 3
 
 keys_available:
-  "yes": -2
+  "yes": 0
   "no": 4
   unknown: 1
 
 odometer_status:
-  actual: -1
+  actual: 0
   not_actual: 6
   exempt: 2
   unknown: 1
@@ -22,8 +23,8 @@ odometer_status:
 # Matched as a substring of the raw code text, first match wins, so list
 # specific sub-codes (3A/3B/3C) before broader ones.
 damage_code_points:
-  "Code 2": -2
-  "Code 3A": 0
+  "Code 2": 0
+  "Code 3A": 2
   "Code 3B": 4
   "Code 3C": 7
   "Code 3": 4
@@ -32,15 +33,16 @@ damage_code_unknown_points: 2
 
 damage_keywords:
   cosmetic:
-    points: -2
+    points: 1
     terms: [bumper, scratch, dent, hail, paint, panel, mirror, cosmetic, scrape, windscreen, glass]
   structural:
     points: 10
     terms: [frame, chassis, flood, flooded, fire, burnt, roof pillar, rollover, airbag, engine, gearbox, transmission, structural, submerged, water damage]
 
+# Kilometres: 150 000 to 199 999 adds a little, 200 000 and up adds more.
 mileage_thresholds:
-  low_max: 80000
-  low_points: -2
+  medium_min: 150000
+  medium_points: 1
   high_min: 200000
   high_points: 3
 
@@ -48,6 +50,7 @@ bid_to_value_ratio:
   high_ratio_threshold: 0.75
   high_ratio_points: 4
 
+# 0-3 Low, 4-8 Medium, 9 and up High.
 thresholds:
-  low_max: 0
+  low_max: 3
   medium_max: 8

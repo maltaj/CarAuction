@@ -1,7 +1,8 @@
 """
 Shared risk scoring for every auction source.
 
-A transparent, additive point system (higher = riskier) driven by rules in
+A transparent, additive point system (0 = no risk signals, higher = riskier;
+only risks add points, so a good sign never cancels a bad one) driven by rules in
 scoring_rules.yaml. It reads only shared `Listing` fields, so a GoBid lot and
 a demo lot are judged by exactly the same rules. Ported from
 gobid_scraper.score_listing.
@@ -82,10 +83,13 @@ def score(listing: Listing, rules: dict) -> Listing:
     mrules = rules.get("mileage_thresholds", {})
     km = listing.mileage_km
     if km is not None:
-        if mrules.get("low_max") is not None and km <= mrules["low_max"]:
-            add(mrules.get("low_points", 0), f"{km:,} km (low)".replace(",", " "))
-        elif mrules.get("high_min") is not None and km >= mrules["high_min"]:
-            add(mrules.get("high_points", 0), f"{km:,} km (high)".replace(",", " "))
+        nice = f"{km:,}".replace(",", " ")
+        if mrules.get("high_min") is not None and km >= mrules["high_min"]:
+            add(mrules.get("high_points", 0), f"{nice} km (high)")
+        elif mrules.get("medium_min") is not None and km >= mrules["medium_min"]:
+            add(mrules.get("medium_points", 0), f"{nice} km (above average)")
+        elif mrules.get("low_max") is not None and km <= mrules["low_max"]:
+            add(mrules.get("low_points", 0), f"{nice} km (low)")
 
     bid = listing.current_bid or listing.starting_bid
     retail = listing.estimated_retail
@@ -95,8 +99,8 @@ def score(listing: Listing, rules: dict) -> Listing:
         if ratio >= rrules["high_ratio_threshold"]:
             add(rrules.get("high_ratio_points", 0), f"Bid is {ratio:.0%} of retail value")
 
-    th = rules.get("thresholds", {"low_max": 0, "medium_max": 8})
-    if total <= th.get("low_max", 0):
+    th = rules.get("thresholds", {"low_max": 3, "medium_max": 8})
+    if total <= th.get("low_max", 3):
         label = LABELS[0]
     elif total <= th.get("medium_max", 8):
         label = LABELS[1]
@@ -105,5 +109,5 @@ def score(listing: Listing, rules: dict) -> Listing:
 
     listing.risk_score = int(round(total))
     listing.risk_label = label
-    listing.risk_reasons = reasons or ["No scoring signals matched"]
+    listing.risk_reasons = reasons or ["No risk signals found in what the auction house published"]
     return listing
