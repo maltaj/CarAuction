@@ -24,7 +24,7 @@ pip install -r requirements.txt
 uvicorn okshun.api:app --reload
 ```
 
-Open http://127.0.0.1:8000. On first start the app loads demo data into `okshun.db`. After changing any rules file, reload so every lot is recalculated: `python -m okshun.ingest`.
+Open http://127.0.0.1:8000. On first start the app loads demo data into `okshun.db`. When the scoring or repair rules change (you edit a YAML file or download a newer version), the app re-scores every lot by itself the next time it starts.
 
 Each ingest also checks saved searches and watchlists and creates alerts; `python -m okshun.alerts` does only that. Schedule ingest with cron or Task Scheduler once real feeds exist. To try alerts on demo data, save a search, then load a different demo batch with `python -m okshun.ingest --seed 7` (it replaces the current demo lots).
 

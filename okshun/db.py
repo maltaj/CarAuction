@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -11,7 +12,8 @@ from typing import Iterable, Optional
 
 from dataclasses import fields
 
-from okshun.schema import DDL, Listing, SourceAdapter, estimate_all_in, upsert
+from okshun.schema import (DDL, AuctionType, Listing, ListingStatus, SaDamageCode, SourceAdapter, Tri,
+                           estimate_all_in, upsert)
 from urllib.parse import parse_qs
 
 from okshun import repairs
@@ -78,8 +80,87 @@ def ingest(conn: sqlite3.Connection, adapters: Iterable[SourceAdapter], rules: O
             "UPDATE listings SET status = 'closed' WHERE source = ? AND last_seen < ?",
             (source, run_start),
         )
+    _meta(conn, "rules_fingerprint", rules_fingerprint())
     conn.commit()
     return counts
+
+
+# Columns the rules produce. Re-scoring rewrites only these, never the auction data.
+DERIVED = ("est_all_in_cost", "risk_score", "risk_label", "risk_reasons", "car_class", "resale_value",
+           "repair_low", "repair_high", "road_low", "road_high", "profit_low", "profit_high",
+           "repair_verdict", "repair_items")
+_RULE_FILES = ("scoring_rules.yaml", "scoring.py", "repair_rules.yaml", "repairs.py")
+_ENUMS = {"damage_code": SaDamageCode, "runs_and_drives": Tri, "keys_available": Tri,
+          "auction_type": AuctionType, "status": ListingStatus}
+
+
+def rules_fingerprint() -> str:
+    """Changes whenever the scoring or repair rules (or their code) change."""
+    h = hashlib.sha256()
+    for name in _RULE_FILES:
+        h.update((Path(__file__).with_name(name)).read_bytes())
+    return h.hexdigest()[:16]
+
+
+def _meta(conn: sqlite3.Connection, key: str, value: Optional[str] = None) -> Optional[str]:
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    if value is None:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+    conn.execute("INSERT INTO meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+    return value
+
+
+def _listing_from_row(row: sqlite3.Row) -> Listing:
+    d = dict(row)
+    kw = {}
+    for f in fields(Listing):
+        v = d.get(f.name)
+        if f.name in _ENUMS:
+            try:
+                v = _ENUMS[f.name](v)
+            except ValueError:
+                v = _ENUMS[f.name]("unknown")
+        elif f.name in ("photo_urls", "risk_reasons", "repair_items"):
+            v = json.loads(v or "[]")
+        elif f.name == "raw":
+            v = {}
+        elif f.name in ("auction_start", "auction_end", "first_seen", "last_seen") and v:
+            v = datetime.fromisoformat(v)
+        elif f.name == "vat_on_hammer" and v is not None:
+            v = bool(v)
+        if v is not None or f.name in ("source", "source_lot_id", "url"):
+            kw[f.name] = v
+    return Listing(**kw)
+
+
+def rescore(conn: sqlite3.Connection, rules: Optional[dict] = None, repair_rules: Optional[dict] = None) -> int:
+    """Recalculate cost, risk and repair figures for every stored lot with the current rules."""
+    rules = rules or load_rules()
+    repair_rules = repair_rules or repairs.load_rules()
+    n = 0
+    for row in conn.execute("SELECT * FROM listings").fetchall():
+        lst = _listing_from_row(row)
+        estimate_all_in(lst)
+        score(lst, rules)
+        repairs.estimate(lst, repair_rules)
+        vals = {k: getattr(lst, k) for k in DERIVED}
+        for k in ("risk_reasons", "repair_items"):
+            vals[k] = json.dumps(vals[k])
+        conn.execute(f"UPDATE listings SET {', '.join(f'{k} = :{k}' for k in DERIVED)} "
+                     "WHERE source = :source AND source_lot_id = :lot",
+                     {**vals, "source": lst.source, "lot": lst.source_lot_id})
+        n += 1
+    _meta(conn, "rules_fingerprint", rules_fingerprint())
+    conn.commit()
+    return n
+
+
+def rescore_if_rules_changed(conn: sqlite3.Connection) -> int:
+    """Run at start-up so edited rules (or an updated download) apply without a manual step."""
+    if _meta(conn, "rules_fingerprint") == rules_fingerprint():
+        return 0
+    return rescore(conn)
 
 
 def _decode(row: sqlite3.Row, sources: dict) -> dict:

@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     ).fetchone()[0]
     if open_count == 0 and os.environ.get("OKSHUN_DEMO", "1") != "0":
         db.ingest(conn, [DemoAdapter()])
+    else:
+        db.rescore_if_rules_changed(conn)  # rules edited or code updated: re-score every lot
     conn.close()
     interval = int(os.environ.get("OKSHUN_REMINDER_INTERVAL", "120"))
     task = asyncio.create_task(_reminder_loop(interval)) if interval > 0 else None
@@ -147,8 +149,13 @@ def get_sources() -> list[dict]:
 
 
 @app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+def index() -> Response:
+    # Version the script and stylesheet links so a browser never keeps an old copy after an update.
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    for name in ("app.js", "styles.css"):
+        v = int((WEB_DIR / name).stat().st_mtime)
+        html = html.replace(f'"/{name}"', f'"/{name}?v={v}"')
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/", StaticFiles(directory=WEB_DIR), name="web")
