@@ -2,60 +2,98 @@
 
 Okshun (working name) brings South African car auctions into one place: search, screening and deal analysis, built for a fix-and-resell workflow.
 
-The tool collects auction listings, normalises them into one shared format, estimates the all-in cost (bid + buyer's commission + fees + VAT) and scores each vehicle for purchase risk. It does **not** place bids. Bidding always happens on the auction house's own site.
+It collects auction listings, normalises them into one shared format, estimates the all-in cost (bid + buyer's commission + fees + VAT) and scores each vehicle for purchase risk. It does **not** place bids. Bidding always happens on the auction house's own site.
 
 ## Status
 
-- `gobid_scraper.py` — logs into gobid.co.za, scrapes listings, scores risk, writes SQLite + CSV, sends email alerts. Setup, selector calibration and scheduling: see [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Selectors marked `# ADJUST ME` still need checking against the live site (`--debug-html`).
-- `listing_schema.py` — shared `Listing` schema, adapter contract, GoBid adapter (#1, mapped to the scraper's real fields), all-in cost estimate and SQLite storage with bid history.
-- Further auction houses — added only with the auction house's written permission (see Data access).
+- **Web app** (`okshun/`): search across houses, filters (risk, cost, year, mileage, condition, house, province, body, make), five sort orders, a lot drawer with the risk breakdown and cost estimate, and a link to bid on the house's site. Works on phones and desktops.
+- **Worth fixing?**: every lot gets a repair estimate (always a range) from its published damage, a "getting it on the road" estimate (transport or towing, roadworthy, registration, Code 3 clearance), a profit range against resale value, a verdict (Worth a look, Thin margin, Not worth it, Inspect first, Parts only) and the highest bid that still leaves a minimum profit. Buyers can enter their own cost for any line, skip lines or add repairs they spotted; edits are kept in their browser, or in their account once signed in. Flood, fire and engine or gearbox faults say "inspect first" instead of guessing. Code 3 resale is discounted, and Code 4/5 cars are valued as parts only. **Repair prices in `okshun/repair_rules.yaml` are placeholders**: replace them with your own repair costs and quotes.
+- **Optional history check**: in a lot's details, buyers pick a vehicle history service they already use (TransUnion Auto, FirstCheck, Lightstone Auto, AA Autofacts or SAIA VIN-Lookup). Okshun copies the VIN and opens that service, then the buyer records the report's mileage and any flags. A report mileage above the lot's mileage is flagged as a possible rolled-back odometer. Okshun never logs into these services; results are kept in the buyer's browser, or in their account once signed in. The provider list is in `okshun/vehicle_checks.yaml`.
+- **Watchlist and compare**: star any lot to watch it, and see a banner when a watched lot closes within 2 hours. Tick up to four lots to compare all-in cost, profit after repairs, verdict, safe maximum bid, risk, mileage, damage and history check side by side, with the best of each marked.
+- **Accounts, saved searches and alerts**: buyers sign up with email and password. Their watchlist, history checks and repair figures move from the browser into the account and follow them to any device. "Save this search" turns current filters into an alert: new lots that match show under Alerts, as do watched lots closing within 2 hours. With SMTP configured, buyers also get one email digest per run (can be turned off per search and for reminders). Passwords are salted PBKDF2 hashes, sessions are random tokens stored only as hashes in an HttpOnly cookie, and buyers can delete their account and all its data.
+- **Reminders and notifications**: buyers choose when to be reminded (1 day, 2 hours, 30 or 15 minutes before) for all watched lots, or per lot. Timed auctions remind before closing; live webcast sales remind before the sale starts and show the lot's place in the running order. Only the most relevant reminder fires, with the real time left. "Tell me if bidding passes R X" sets a bid limit and alerts when bidding goes over it. Reminders reach the buyer as phone/browser notifications (Web Push, no app store needed), email and in-app Alerts; tapping a notification opens the lot. Every lot also has "Add to calendar" (an .ics event with a 30-minute alarm). The server checks every 2 minutes.
+- **Data**: runs on demo data from five fictional houses (every name contains "Demo" and the app labels it). No real auction house is connected yet; each is added only with its written permission (see Data access).
+- **GoBid scraper** (`gobid_scraper.py`): personal-use tool for your own GoBid login. Setup and selector calibration: [GOBID_SCRAPER.md](GOBID_SCRAPER.md). Not part of the public app.
+
+## Run the web app
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate             # Windows (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+uvicorn okshun.api:app --reload
+```
+
+Open http://127.0.0.1:8000. On first start the app loads demo data into `okshun.db`. After changing any rules file, reload so every lot is recalculated: `python -m okshun.ingest`.
+
+Each ingest also checks saved searches and watchlists and creates alerts; `python -m okshun.alerts` does only that. Schedule ingest with cron or Task Scheduler once real feeds exist. To try alerts on demo data, save a search, then load a different demo batch with `python -m okshun.ingest --seed 7` (it replaces the current demo lots).
+
+### Email alerts (optional)
+
+Set these environment variables before running ingest or alerts:
+
+| Variable | Example |
+| --- | --- |
+| `OKSHUN_SMTP_HOST` | `smtp.gmail.com` |
+| `OKSHUN_SMTP_PORT` | `587` (default) |
+| `OKSHUN_SMTP_USER`, `OKSHUN_SMTP_PASSWORD` | an app password, not your normal password |
+| `OKSHUN_MAIL_FROM` | `alerts@yourdomain.co.za` |
+| `OKSHUN_BASE_URL` | `https://okshun.co.za` (used for links in emails) |
+
+Without them, alerts appear only in the app. When the site runs on HTTPS, also set `OKSHUN_SECURE_COOKIES=1`.
+
+### Phone notifications
+
+Buyers turn them on in their account. They work in Chrome, Edge and Firefox on Android and desktop, and on iPhone (iOS 16.4 or later) once Okshun is added to the Home Screen. Browsers only allow them on HTTPS sites (and on `localhost` for testing).
+
+| Variable | What it does |
+| --- | --- |
+| `OKSHUN_VAPID_PRIVATE`, `OKSHUN_VAPID_PUBLIC` | Fixed push keys (base64url). If unset, a pair is generated on first use and kept in the database. Keep the same keys in production: changing them stops existing subscriptions. Make a pair with `python -c "from okshun.push import generate_keys; print(generate_keys())"` |
+| `OKSHUN_PUSH_SUBJECT` | Contact for push services, e.g. `mailto:alerts@okshun.co.za` |
+| `OKSHUN_REMINDER_INTERVAL` | Seconds between reminder checks in the web server (default 120; `0` turns the checker off) |
+
+Without the web server running, check with `python -m okshun.alerts` (once) or `python -m okshun.alerts --every 120`.
+
+Run the tests with `pytest`.
 
 ## How it fits together
 
 ```
-auction house data ──► SourceAdapter (one per house) ──► Listing
-                                                             │
-                                  estimate_all_in() ◄────────┤
-                                  risk scoring      ◄────────┤
-                                                             ▼
-                                              SQLite: listings + bid_history
-                                                             │
-                                                     CSV export / email alerts
+auction house data ──► SourceAdapter (one per house, okshun/adapters/) ──► Listing
+                                                                              │
+                                              estimate_all_in()  ◄────────────┤
+                                              scoring.score()    ◄────────────┤
+                                                                              ▼
+                                                       SQLite: listings + bid_history
+                                                                              │
+                                                     FastAPI (okshun/api.py) ──► web front end
 ```
 
-Each adapter only fetches and maps data. Fee estimates, scoring, storage and alerts are shared, so a new auction house needs only a new adapter.
+Adapters only fetch and map data. Fee estimates, scoring, storage and the API are shared, so connecting a new auction house means writing one adapter and registering it in `okshun/adapters/__init__.py`.
 
-## Quick start
+## Project layout
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-pip install -r requirements.txt
-playwright install chromium
-copy config.example.yaml config.yaml   # then add your GoBid login
-python gobid_scraper.py
-```
-
-To feed scraper output into the shared schema:
-
-```python
-import sqlite3
-from listing_schema import GoBidAdapter, estimate_all_in, upsert, DDL
-
-conn = sqlite3.connect("auctions.db")
-conn.executescript(DDL)
-
-listings = GoBidAdapter(scraped).run()   # scraped = gobid_scraper.Listing objects
-for l in listings:
-    estimate_all_in(l)
-upsert(conn, listings)
-```
-
-Set `default_commission_pct` and `default_fixed_fees` on `GoBidAdapter` to GoBid's published buyer's fees so the all-in cost estimate is complete.
+| Path | What it does |
+| --- | --- |
+| `okshun/schema.py` | Shared `Listing` dataclass, adapter contract, parsing helpers, all-in cost, SQLite schema and upsert |
+| `okshun/scoring.py`, `okshun/scoring_rules.yaml` | Risk scoring used for every source; only risks add points (0 = no risk signals; 0–3 Low, 4–8 Medium, 9+ High); tune points and thresholds in the YAML |
+| `okshun/adapters/demo.py` | Demo lots from fictional houses, with real SA model-year ranges |
+| `okshun/adapters/gobid.py` | Maps GoBid scraper output to `Listing` (personal use only) |
+| `okshun/adapters/__init__.py` | Which sources the app runs, and how each house is shown |
+| `okshun/repairs.py`, `okshun/repair_rules.yaml` | Repair, road-cost and profit estimates with verdicts; tune damage items, car classes, Code 3 discount and thresholds in the YAML |
+| `okshun/vehicle_checks.yaml` | History/odometer services buyers can open from a lot, with what each one checks |
+| `okshun/users.py`, `okshun/account_api.py`, `okshun/deps.py` | Accounts, sessions, watchlist, per-lot notes, saved searches and their API |
+| `okshun/alerts.py` | New matches, reminders (closing and live-sale start), bid-limit alerts; delivery by phone notification and email |
+| `okshun/push.py` | Web Push: VAPID signing and RFC 8291 encryption, using only `cryptography` |
+| `okshun/calendar.py` | Calendar (.ics) events for lots |
+| `okshun/db.py`, `okshun/ingest.py` | Ingest pipeline, search queries, automatic database upgrades |
+| `okshun/api.py` | JSON API (`/api/listings`, `/api/listings/{source}/{lot}`, `/api/facets`, `/api/sources`, `/api/vehicle-checks`, `/api/repair-rules`, plus `/api/auth/*` and `/api/me/*` for accounts) and the static front end |
+| `okshun/web/` | Front end: plain HTML, CSS and JavaScript, no build step; `sw.js` shows notifications, `manifest.webmanifest` lets phones install it |
+| `gobid_scraper.py` | Personal GoBid scraper with its own scoring and email alerts |
 
 ## Data access
 
-Auction houses' terms may prohibit automated data collection. Only collect data for personal use where permitted, and add a source to a shared or paid product only under a written agreement with that auction house.
+Auction houses' terms may prohibit automated data collection. Only collect data for personal use where permitted, and add a source to the public app only under a written agreement with that auction house.
 
 ## Secrets
 

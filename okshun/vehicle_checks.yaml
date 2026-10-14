@@ -1,0 +1,59 @@
+# Vehicle history / odometer check services a buyer may already use.
+#
+# Okshun never logs into these services or stores buyer credentials. The app
+# copies the lot's VIN, opens the buyer's chosen service in a new tab, and lets
+# the buyer record what the report says. None of these services publishes a
+# consumer API; TransUnion and Lightstone sell API access to businesses under
+# contract, which is a later partnership option.
+#
+# What each entry says is taken from the provider's own site or announcement
+# (checked October 2026). Prices change: confirm on the provider's site.
+#
+# mileage: "yes" = the provider says its report includes mileage/odometer history
+#          "no"  = the provider's description doesn't mention mileage history
+
+providers:
+  - id: transunion
+    name: TransUnion Auto
+    url: https://www.transunion.co.za
+    mileage: "yes"
+    checks: Mileage history and odometer alerts, accident claim history, finance, police interest, microdot
+    needs: Registration number or VIN
+    access: Business subscription, mainly for dealers
+    source: https://newsroom.transunion.com/transunion-launches-on-the-move-vehicle-verification-and-valuation-reports/
+
+  - id: firstcheck
+    name: FirstCheck
+    url: https://www.firstcheck.co.za
+    mileage: "no"
+    checks: Accident damage and claim history, stolen or wanted, finance, cloned-VIN check, specification, valuation
+    needs: VIN, or a photo or scan of the licence disc
+    access: Personal account; reports from R79 (per its site)
+    source: https://www.firstcheck.co.za
+
+  - id: lightstone
+    name: Lightstone Auto
+    url: https://corporate.lightstone.co.za/vehicle-information
+    mileage: "no"
+    checks: VIN and engine number validation, police status, finance interest, microdot, repair history add-on
+    needs: VIN, or a scan of the licence disc
+    access: Account on request, mainly for dealers and finance teams; pay per report
+    source: https://corporate.lightstone.co.za/vehicle-information
+
+  - id: aa
+    name: AA Autofacts
+    url: https://www.aa.co.za/aa-autofacts/
+    mileage: "no"
+    checks: Finance interest, police interest, microdot, service and warranty kilometres (Verification report)
+    needs: VIN and engine number
+    access: Per report; Verification report R89 (per its site)
+    source: https://www.aa.co.za/aa-autofacts/
+
+  - id: saia
+    name: SAIA VIN-Lookup
+    url: https://www.vinlookupsa.co.za
+    mileage: "no"
+    checks: Whether insurers recorded the car as Code 3, 3A or 4 salvage. Covers only cars insured by SAIA members, so "not found" isn't a clean bill of health
+    needs: VIN, plus your name and ID number on their site
+    access: Free
+    source: https://www.moonstone.co.za/saia-launches-online-tool-for-consumers-to-check-the-status-of-a-second-hand-vehicle/

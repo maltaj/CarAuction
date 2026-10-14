@@ -51,17 +51,17 @@ scoring:
   enabled: true
 
   run_and_drive:
-    "yes": -5        # confirmed running/driving is a strong low-risk signal
+    "yes": 0         # only risks add points, so a good sign never hides a bad one
     "no": 8
     unknown: 3
 
   keys_available:
-    "yes": -2
+    "yes": 0
     "no": 4
     unknown: 1
 
   odometer_status:
-    actual: -1
+    actual: 0
     not_actual: 6   # tampered/rolled-back odometers are a real red flag
     exempt: 2
     unknown: 1
@@ -70,8 +70,8 @@ scoring:
   # Uses substring matching, so "Code 3A" also matches a key of "Code 3".
   # More specific keys should come first if you want them checked first.
   damage_code_points:
-    "Code 2": -2      # previously registered, no accident damage recorded
-    "Code 3A": 0       # rebuilt, damage cleared -- neutral starting point
+    "Code 2": 0       # previously registered, no accident damage recorded
+    "Code 3A": 2       # rebuilt, damage cleared
     "Code 3B": 4
     "Code 3C": 7
     "Code 4": 10        # irreparable / not for road use -- high risk by default
@@ -80,15 +80,15 @@ scoring:
   # Keyword scan over primary_damage + secondary_damage + description.
   damage_keywords:
     cosmetic:
-      points: -2
+      points: 1
       terms: [bumper, scratch, dent, hail, paint, panel, mirror, cosmetic, scrape, windscreen, glass]
     structural:
       points: 10
-      terms: [frame, chassis, flood, flooded, fire, burnt, roof, airbag, engine, gearbox, transmission, structural, submerged, water damage]
+      terms: [frame, chassis, flood, flooded, fire, burnt, roof pillar, rollover, airbag, engine, gearbox, transmission, structural, submerged, water damage]
 
   mileage_thresholds:       # km, parsed from the mileage field
     low_max: 80000
-    low_points: -2
+    low_points: 0
     high_min: 200000
     high_points: 3
 
@@ -99,6 +99,6 @@ scoring:
 
   # Final label boundaries, based on total accumulated score.
   thresholds:
-    low_max: 0        # score <= 0      -> "Low Risk"
-    medium_max: 8      # 0 < score <= 8  -> "Medium Risk"
+    low_max: 3        # score 0-3       -> "Low Risk"
+    medium_max: 8      # score 4-8       -> "Medium Risk"
                         # score > 8       -> "High Risk"
